@@ -34,12 +34,19 @@ class _CameraScreenState extends State<CameraScreen>
   final _words = <String>[];
   double _confidence = 0.0;
   bool _thinking = false;
+  String _language = 'en'; // 'tr' = AUTSL (Türkçe), 'en' = WLASL (İngilizce)
+
+  // İskelet görselleştirme
+  List<double>? _poseLandmarks;
+  List<double>? _lhLandmarks;
+  List<double>? _rhLandmarks;
 
   // Frame tamponu
   final List<String> _frameBuf = [];
   static const int _bufSize = 30;
   Timer? _captureTimer;
   bool _capturing = false;
+  bool _sending = false;
 
   // Sessizlik sayacı (kelime gelmeyi bırakınca cümleye dönüştür)
   Timer? _silenceTimer;
@@ -92,9 +99,9 @@ class _CameraScreenState extends State<CameraScreen>
   // ── Frame yakalama ────────────────────────────────────────────────────────
 
   void _startCapture() {
-    // Her 500ms'de bir fotoğraf çek → 30 karelik tampon dolunca backend'e gönder
+    // Her 100ms'de bir fotoğraf çek → 30 frame ≈ 3 saniye (model 25fps video ile eğitildi)
     _captureTimer = Timer.periodic(
-      const Duration(milliseconds: 500),
+      const Duration(milliseconds: 100),
       (_) => _captureFrame(),
     );
   }
@@ -115,18 +122,31 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _sendBuffer() async {
-    final frames = List<String>.from(_frameBuf);
-    final result = await _api.predict(frames);
-    if (!mounted || result == null) return;
+    if (_sending) return;
+    _sending = true;
+    try {
+      final frames = List<String>.from(_frameBuf);
+      final result = await _api.predict(frames, language: _language);
+      if (!mounted || result == null) return;
 
-    setState(() {
-      _confidence = result.confidence;
-      if (!_words.contains(result.word)) {
-        _words.add(result.word);
-        if (_words.length > 6) _words.removeAt(0);
-      }
-    });
-    _resetSilence();
+      setState(() {
+        _confidence = result.confidence;
+        // Keypoint'leri her zaman güncelle (iskelet için)
+        if (result.poseLandmarks != null) {
+          _poseLandmarks = result.poseLandmarks;
+          _lhLandmarks = result.lhLandmarks;
+          _rhLandmarks = result.rhLandmarks;
+        }
+        // Kelimeyi sadece geçerli tahmin varsa ekle
+        if (result.word != null && !_words.contains(result.word)) {
+          _words.add(result.word!);
+          if (_words.length > 6) _words.removeAt(0);
+        }
+      });
+      if (result.word != null) _resetSilence();
+    } finally {
+      _sending = false;
+    }
   }
 
   void _resetSilence() {
@@ -138,7 +158,7 @@ class _CameraScreenState extends State<CameraScreen>
     if (_words.isEmpty) return;
     setState(() => _thinking = true);
     final ws = List<String>.from(_words);
-    final s = await _api.constructSentence(ws);
+    final s = await _api.constructSentence(ws, language: _language);
     if (!mounted) return;
     setState(() {
       _sentence = s ?? ws.join(' ');
@@ -156,6 +176,9 @@ class _CameraScreenState extends State<CameraScreen>
       _frameBuf.clear();
       _confidence = 0;
       _thinking = false;
+      _poseLandmarks = null;
+      _lhLandmarks = null;
+      _rhLandmarks = null;
     });
   }
 
@@ -177,6 +200,29 @@ class _CameraScreenState extends State<CameraScreen>
       body: SafeArea(
         child: Column(
           children: [
+            // ── Dil seçici ────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Row(
+                children: [
+                  const Text('Model:',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                  const SizedBox(width: 8),
+                  _LangButton(
+                    label: 'TR (AUTSL)',
+                    active: _language == 'tr',
+                    onTap: () => setState(() { _language = 'tr'; _clear(); }),
+                  ),
+                  const SizedBox(width: 6),
+                  _LangButton(
+                    label: 'EN (WLASL)',
+                    active: _language == 'en',
+                    onTap: () => setState(() { _language = 'en'; _clear(); }),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
             // ── Kamera alanı ──────────────────────────────────────────────
             Expanded(
               flex: 5,
@@ -223,6 +269,17 @@ class _CameraScreenState extends State<CameraScreen>
                             size: Size.infinite,
                             painter: _GridPainter(),
                           ),
+
+                          // İskelet overlay
+                          if (_poseLandmarks != null)
+                            CustomPaint(
+                              size: Size.infinite,
+                              painter: _SkeletonPainter(
+                                poseLandmarks: _poseLandmarks!,
+                                lhLandmarks: _lhLandmarks,
+                                rhLandmarks: _rhLandmarks,
+                              ),
+                            ),
 
                           // El algılama kutusu (kamera hazır olunca)
                           if (_camReady)
@@ -696,6 +753,151 @@ class _ActionButton extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonPainter extends CustomPainter {
+  final List<double> poseLandmarks; // 33 × 4 (x, y, z, visibility)
+  final List<double>? lhLandmarks;  // 21 × 3 (x, y, z)
+  final List<double>? rhLandmarks;  // 21 × 3 (x, y, z)
+
+  const _SkeletonPainter({
+    required this.poseLandmarks,
+    this.lhLandmarks,
+    this.rhLandmarks,
+  });
+
+  static const _poseConnections = [
+    [0, 1], [1, 2], [2, 3], [3, 7],
+    [0, 4], [4, 5], [5, 6], [6, 8],
+    [9, 10],
+    [11, 12], [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
+    [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
+    [11, 23], [12, 24], [23, 24], [23, 25], [24, 26],
+    [25, 27], [26, 28], [27, 29], [28, 30], [29, 31], [30, 32], [27, 31], [28, 32],
+  ];
+
+  static const _handConnections = [
+    [0, 1], [1, 2], [2, 3], [3, 4],
+    [0, 5], [5, 6], [6, 7], [7, 8],
+    [5, 9], [9, 10], [10, 11], [11, 12],
+    [9, 13], [13, 14], [14, 15], [15, 16],
+    [13, 17], [17, 18], [18, 19], [19, 20],
+    [0, 17],
+  ];
+
+  Offset _posePoint(int i, Size s) => Offset(
+        poseLandmarks[i * 4] * s.width,
+        poseLandmarks[i * 4 + 1] * s.height,
+      );
+
+  double _poseVis(int i) => poseLandmarks[i * 4 + 3];
+
+  Offset _handPoint(List<double> kp, int i, Size s) => Offset(
+        kp[i * 3] * s.width,
+        kp[i * 3 + 1] * s.height,
+      );
+
+  bool _handPresent(List<double>? kp) {
+    if (kp == null) return false;
+    double sum = 0;
+    for (final v in kp) {
+      sum += v < 0 ? -v : v;
+    }
+    return sum > 0.05;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bodyLine = Paint()
+      ..color = const Color(0xCC00FF88)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    final bodyDot = Paint()
+      ..color = const Color(0xFF00FF88)
+      ..style = PaintingStyle.fill;
+
+    final lhLine = Paint()
+      ..color = const Color(0xCCFFD700)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    final rhLine = Paint()
+      ..color = const Color(0xCC4DB8FF)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    // Vücut iskeletini çiz
+    for (final c in _poseConnections) {
+      if (_poseVis(c[0]) > 0.3 && _poseVis(c[1]) > 0.3) {
+        canvas.drawLine(_posePoint(c[0], size), _posePoint(c[1], size), bodyLine);
+      }
+    }
+    for (int i = 0; i < 33; i++) {
+      if (_poseVis(i) > 0.3) {
+        canvas.drawCircle(_posePoint(i, size), 3.0, bodyDot);
+      }
+    }
+
+    // El iskeletini çiz
+    void drawHand(List<double>? kp, Paint line) {
+      if (!_handPresent(kp)) return;
+      final dot = Paint()
+        ..color = line.color
+        ..style = PaintingStyle.fill;
+      for (final c in _handConnections) {
+        canvas.drawLine(_handPoint(kp!, c[0], size), _handPoint(kp, c[1], size), line);
+      }
+      for (int i = 0; i < 21; i++) {
+        canvas.drawCircle(_handPoint(kp!, i, size), 3.0, dot);
+      }
+    }
+
+    drawHand(lhLandmarks, lhLine);
+    drawHand(rhLandmarks, rhLine);
+  }
+
+  @override
+  bool shouldRepaint(_SkeletonPainter old) =>
+      poseLandmarks != old.poseLandmarks ||
+      lhLandmarks != old.lhLandmarks ||
+      rhLandmarks != old.rhLandmarks;
+}
+
+class _LangButton extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+  const _LangButton({required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: active ? AppColors.green : AppColors.bgCard2,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: active ? AppColors.green : AppColors.border,
+            width: 0.5,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: active ? Colors.white : AppColors.textSub,
+            fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+          ),
         ),
       ),
     );

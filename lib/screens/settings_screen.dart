@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../services/api_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -14,6 +15,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _model = 'TSİD v2.1';
   String _inferenceMode = 'Hibrit';
   String _subtitleSize = 'Büyük';
+  late TextEditingController _urlController;
+
+  @override
+  void initState() {
+    super.initState();
+    _urlController = TextEditingController(text: ApiService.baseUrl);
+  }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -129,6 +143,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 20),
 
+              // BAĞLANTI section
+              _SectionLabel(label: 'BAĞLANTI'),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                decoration: BoxDecoration(
+                  color: AppColors.bgCard,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.border, width: 0.5),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: AppColors.green.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.cloud_outlined,
+                          size: 17, color: AppColors.green),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: TextField(
+                        controller: _urlController,
+                        style: const TextStyle(
+                            fontSize: 13, color: AppColors.text),
+                        decoration: const InputDecoration(
+                          labelText: 'Backend URL',
+                          labelStyle:
+                              TextStyle(fontSize: 12, color: AppColors.textSub),
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        onSubmitted: (_) => _saveBackendUrl(),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: _saveBackendUrl,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: AppColors.green,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text('Kaydet',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
               // ÇIKTI section
               _SectionLabel(label: 'ÇIKTI'),
               const SizedBox(height: 8),
@@ -201,6 +278,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Future<void> _saveBackendUrl() async {
+    final url = _urlController.text.trim();
+    if (url.isEmpty) return;
+    await ApiService.saveUrl(url);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Backend URL güncellendi: $url'),
+        backgroundColor: AppColors.green,
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/camera_service.dart';
 import '../services/api_service.dart';
+import '../services/on_device_sign_service.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -23,10 +24,11 @@ class _CameraScreenState extends State<CameraScreen>
   // ── Servisler ─────────────────────────────────────────────────────────────
   final CameraService _cam = CameraService();
   final ApiService _api = ApiService();
+  final OnDeviceSignService _onDevice = OnDeviceSignService();
 
   // ── Durum ─────────────────────────────────────────────────────────────────
   bool _camReady = false;
-  bool _backendUp = false;
+  bool _onDeviceReady = false;
   String _statusMsg = 'Başlatılıyor...';
 
   // Tanıma çıktısı
@@ -34,19 +36,15 @@ class _CameraScreenState extends State<CameraScreen>
   final _words = <String>[];
   double _confidence = 0.0;
   bool _thinking = false;
-  String _language = 'en'; // 'tr' = AUTSL (Türkçe), 'en' = WLASL (İngilizce)
+  String _language = 'en'; // 'tr' = AUTSL (Türkçe), 'en' = ASL Citizen (İngilizce)
 
   // İskelet görselleştirme
   List<double>? _poseLandmarks;
   List<double>? _lhLandmarks;
   List<double>? _rhLandmarks;
 
-  // Frame tamponu
-  final List<String> _frameBuf = [];
-  static const int _bufSize = 30;
   Timer? _captureTimer;
   bool _capturing = false;
-  bool _sending = false;
 
   // Sessizlik sayacı (kelime gelmeyi bırakınca cümleye dönüştür)
   Timer? _silenceTimer;
@@ -77,9 +75,8 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _startup() async {
-    // Backend bağlantı kontrolü
-    final up = await _api.checkHealth();
-    if (mounted) setState(() => _backendUp = up);
+    // On-device servisi arka planda başlat
+    _initOnDevice();
 
     // Kamerayı aç
     try {
@@ -87,12 +84,27 @@ class _CameraScreenState extends State<CameraScreen>
       if (mounted) {
         setState(() {
           _camReady = true;
-          _statusMsg = up ? 'Hazır — işaret yapın' : 'Backend bağlantısı yok';
+          _statusMsg = 'Hazır — işaret yapın';
         });
         _startCapture();
       }
     } catch (e) {
       if (mounted) setState(() => _statusMsg = 'Kamera hatası: $e');
+    }
+  }
+
+  Future<void> _initOnDevice() async {
+    try {
+      await _onDevice.initialize(_language);
+      if (mounted) setState(() => _onDeviceReady = true);
+    } catch (e, st) {
+      debugPrint('[OnDevice INIT ERROR] $e\n$st');
+      if (mounted) {
+        setState(() {
+          _onDeviceReady = false;
+          _statusMsg = 'Model yüklenemedi: $e';
+        });
+      }
     }
   }
 
@@ -107,45 +119,32 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _captureFrame() async {
-    if (_capturing || !_camReady || !_backendUp) return;
+    if (_capturing || !_camReady || !_onDeviceReady) return;
     _capturing = true;
     try {
       final file = await _cam.takePicture();
       final bytes = await file.readAsBytes();
-      _frameBuf.add(base64Encode(bytes));
-      if (_frameBuf.length > _bufSize) _frameBuf.removeAt(0);
-      if (_frameBuf.length >= _bufSize) _sendBuffer();
-    } catch (_) {
-    } finally {
-      _capturing = false;
-    }
-  }
+      final b64 = base64Encode(bytes);
 
-  Future<void> _sendBuffer() async {
-    if (_sending) return;
-    _sending = true;
-    try {
-      final frames = List<String>.from(_frameBuf);
-      final result = await _api.predict(frames, language: _language);
-      if (!mounted || result == null) return;
-
+      final r = await _onDevice.processFrame(b64);
+      if (!mounted) return;
       setState(() {
-        _confidence = result.confidence;
-        // Keypoint'leri her zaman güncelle (iskelet için)
-        if (result.poseLandmarks != null) {
-          _poseLandmarks = result.poseLandmarks;
-          _lhLandmarks = result.lhLandmarks;
-          _rhLandmarks = result.rhLandmarks;
+        _confidence = r.confidence;
+        if (r.poseLm != null) {
+          _poseLandmarks = r.poseLm;
+          _lhLandmarks   = r.lhLm;
+          _rhLandmarks   = r.rhLm;
         }
-        // Kelimeyi sadece geçerli tahmin varsa ekle
-        if (result.word != null && !_words.contains(result.word)) {
-          _words.add(result.word!);
+        if (r.word != null && !_words.contains(r.word)) {
+          _words.add(r.word!);
           if (_words.length > 6) _words.removeAt(0);
         }
       });
-      if (result.word != null) _resetSilence();
+      if (r.word != null) _resetSilence();
+    } catch (e, st) {
+      debugPrint('[CaptureFrame ERROR] $e\n$st');
     } finally {
-      _sending = false;
+      _capturing = false;
     }
   }
 
@@ -170,10 +169,10 @@ class _CameraScreenState extends State<CameraScreen>
 
   void _clear() {
     _silenceTimer?.cancel();
+    _onDevice.resetBuffer();
     setState(() {
       _sentence = '';
       _words.clear();
-      _frameBuf.clear();
       _confidence = 0;
       _thinking = false;
       _poseLandmarks = null;
@@ -189,6 +188,7 @@ class _CameraScreenState extends State<CameraScreen>
     _captureTimer?.cancel();
     _silenceTimer?.cancel();
     _cam.dispose();
+    _onDevice.dispose();
     super.dispose();
   }
 
@@ -211,14 +211,24 @@ class _CameraScreenState extends State<CameraScreen>
                   _LangButton(
                     label: 'TR (AUTSL)',
                     active: _language == 'tr',
-                    onTap: () => setState(() { _language = 'tr'; _clear(); }),
+                    onTap: () {
+                      setState(() { _language = 'tr'; _onDeviceReady = false; });
+                      _clear();
+                      _initOnDevice();
+                    },
                   ),
                   const SizedBox(width: 6),
                   _LangButton(
-                    label: 'EN (WLASL)',
+                    label: 'EN (ASL Citizen)',
                     active: _language == 'en',
-                    onTap: () => setState(() { _language = 'en'; _clear(); }),
+                    onTap: () {
+                      setState(() { _language = 'en'; _onDeviceReady = false; });
+                      _clear();
+                      _initOnDevice();
+                    },
                   ),
+                  const Spacer(),
+                  _OnDeviceStatusBadge(ready: _onDeviceReady),
                 ],
               ),
             ),
@@ -281,8 +291,8 @@ class _CameraScreenState extends State<CameraScreen>
                               ),
                             ),
 
-                          // El algılama kutusu (kamera hazır olunca)
-                          if (_camReady)
+                          // Gerçek iskelet gelene kadar placeholder kutu
+                          if (_camReady && _poseLandmarks == null)
                             Center(
                               child: AnimatedBuilder(
                                 animation: _pulseAnim,
@@ -294,37 +304,12 @@ class _CameraScreenState extends State<CameraScreen>
                               ),
                             ),
 
-                          // Alt sol — CANLI + backend durumu
+                          // Alt sol — CANLI rozeti
                           if (_camReady)
                             Positioned(
                               bottom: 16,
                               left: 16,
-                              child: Row(
-                                children: [
-                                  _LiveBadge(dotController: _dotController),
-                                  const SizedBox(width: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black54,
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(
-                                      _backendUp
-                                          ? 'Backend bağlı'
-                                          : 'Backend yok',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: _backendUp
-                                            ? AppColors.green
-                                            : const Color(0xFFE74C3C),
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                              child: _LiveBadge(dotController: _dotController),
                             ),
 
                           // Sağ üst — güven skoru
@@ -869,6 +854,33 @@ class _SkeletonPainter extends CustomPainter {
       poseLandmarks != old.poseLandmarks ||
       lhLandmarks != old.lhLandmarks ||
       rhLandmarks != old.rhLandmarks;
+}
+
+class _OnDeviceStatusBadge extends StatelessWidget {
+  final bool ready;
+  const _OnDeviceStatusBadge({required this.ready});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = ready ? AppColors.green : const Color(0xFFE5A500);
+    final label = ready ? 'On-Device ✓' : 'On-Device…';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color, width: 0.5),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
 }
 
 class _LangButton extends StatelessWidget {

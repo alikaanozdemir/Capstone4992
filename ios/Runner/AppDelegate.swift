@@ -12,5 +12,6 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    MediaPipePlugin.register(with: engineBridge.pluginRegistry.registrar(forPlugin: "MediaPipePlugin")!)
   }
 }

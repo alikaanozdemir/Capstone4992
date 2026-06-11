@@ -19,6 +19,7 @@ dependencies:
   http: ^1.2.0
   permission_handler: ^11.3.0
   shared_preferences: ^2.2.3
+  onnxruntime: ^1.4.0
 
 dev_dependencies:
   flutter_test:
@@ -27,3 +28,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/models/model_autsl.onnx
+    - assets/models/model_asl_citizen.onnx
+    - assets/models/preprocess_autsl.json
+    - assets/models/preprocess_asl_citizen.json

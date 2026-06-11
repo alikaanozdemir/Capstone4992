@@ -1,112 +1,142 @@
-# Sign App — Flutter Frontend
+# Sign App — Flutter Mobil Uygulaması
 
-İşaret dili çeviri uygulaması. Görseldeki tasarımı birebir Flutter/Dart ile yeniden oluşturur.
+Gerçek zamanlı işaret dili çeviri uygulaması. Kameradan 30'ar frame'lik pencereler alır, Python backend'e göndererek kelime tahmini yapar ve Ollama/Qwen2.5 ile akıcı cümle oluşturur.
 
-## Ekranlar
-- **Kamera (Canlı Detection)** — El tespiti kutusu, animasyonlu CANLI rozeti, güven skoru, keyword chip'leri, metin balonu
-- **Geçmiş** — Arama, TSİD/TİD badge'leri, zaman damgaları
-- **Ayarlar** — Kullanıcı kartı, toggle'lar, picker bottom sheet'ler
+Türk İşaret Dili (TID/AUTSL) ve Amerikan İşaret Dili (ASL/WLASL) desteklenmektedir.
 
 ---
 
-## Kurulum
+## Özellikler
+
+- **Gerçek zamanlı kamera akışı** — 100 ms'de bir frame yakalayarak 30-frame tampon oluşturur
+- **İskelet overlay** — vücut pozu ve el landmarkları canlı olarak kamera görüntüsü üzerine çizilir
+- **Dil seçimi** — TR (AUTSL) ve EN (WLASL) modelleri arasında geçiş
+- **Cümle üretimi** — 3 saniyelik sessizlikten sonra kelimeler otomatik olarak cümleye dönüştürülür
+- **Geçmiş ekranı** — önceki çeviriler kaydedilip listelenir
+- **Ayarlar ekranı** — backend URL değiştirme (farklı cihazlar için LAN IP desteği)
+
+---
+
+## Ekranlar
+
+| Ekran | Açıklama |
+|---|---|
+| Kamera | Frame yakalama, iskelet overlay, kelime chip'leri, cümle paneli |
+| Geçmiş | Kaydedilmiş çeviriler |
+| Ayarlar | Backend URL yapılandırması |
+
+---
+
+## Backend Kurulumu
+
+Uygulama, ayrı bir Python FastAPI sunucusuna ihtiyaç duyar. Kurulum için `capstone_final/` dizinindeki `README.md` dosyasına bakın.
+
+### Backend Adresi
+
+Uygulamayı başlatmadan önce doğru backend adresini Ayarlar ekranından girin:
+
+| Platform | Adres |
+|---|---|
+| Android emülatör | `http://10.0.2.2:8000` |
+| iOS simülatör | `http://localhost:8000` |
+| Gerçek cihaz | `http://<bilgisayarın_LAN_IP>:8000` |
+
+Varsayılan adres `http://10.0.2.2:8000` olarak ayarlanmıştır.
+
+---
+
+## Kurulum ve Çalıştırma
 
 ### Gereksinimler
-- Flutter SDK ≥ 3.0.0 → https://flutter.dev/docs/get-started/install
-- Xcode ≥ 14 (iOS için)
-- Android Studio (Android için)
 
-### Adımlar
+- Flutter SDK `>=3.0.0`
+- Xcode (iOS için) veya Android Studio (Android için)
+- Çalışan `capstone_final` backend sunucusu
+
+### Bağımlılıkları Yükle
 
 ```bash
-# 1. Proje dizinine gir
-cd sign_app
-
-# 2. Bağımlılıkları yükle
+cd Capstone4992
 flutter pub get
-
-# 3. iOS için pod'ları yükle
-cd ios && pod install && cd ..
-
-# 4. Çalıştır
-# iOS Simulator:
-flutter run -d iPhone                  # Xcode Simulator seçer
-
-# Android Emulator:
-flutter run -d emulator-5554           # Android Studio emülatörü
-# ya da sadece:
-flutter run                            # bağlı cihazı/emülatörü otomatik seçer
 ```
+
+### iOS
+
+```bash
+cd ios && pod install && cd ..
+flutter run
+```
+
+### Android
+
+```bash
+flutter run
+```
+
+---
+
+## Nasıl Çalışır
+
+```
+Kamera (100ms/frame)
+      │
+      ▼
+30-frame tampon (base64 JPEG)
+      │
+      ├── POST /predict   → kelime + güven skoru
+      │
+      ├── POST /landmarks → pose + el koordinatları (iskelet overlay)
+      │
+      └── 3 sn sessizlik sonra
+             POST /sentence  → akıcı cümle (Ollama/Qwen2.5)
+```
+
+1. Uygulama açılınca backend'e `/health` isteği atar; bağlantı durumunu gösterir.
+2. Her 100 ms'de kamera frame'i base64 JPEG olarak kodlanır ve tampona eklenir.
+3. Tampon 30 frame'e dolduğunda `/predict` endpoint'ine gönderilir.
+4. Aynı anda `/landmarks` endpoint'i ile her frame'in iskelet verisi alınarak kamera önizlemesi üzerine çizilir.
+5. Yeni bir kelime algılandığında 3 saniyelik sessizlik sayacı sıfırlanır.
+6. 3 saniye boyunca yeni kelime gelmezse `/sentence` endpoint'ine kelime listesi gönderilir ve akıcı cümle gösterilir.
 
 ---
 
 ## Proje Yapısı
 
 ```
-lib/
-├── main.dart                  ← Uygulama girişi + bottom nav kabuğu
-├── theme/
-│   └── app_theme.dart         ← Renkler, tipografi, ThemeData
-├── models/
-│   └── translation_entry.dart ← Çeviri modeli + mock veriler
-├── widgets/
-│   ├── bottom_nav.dart        ← Alt navigasyon çubuğu
-│   └── type_badge.dart        ← TSİD / TİD rozet widget'ı
-└── screens/
-    ├── camera_screen.dart     ← Kamera / Canlı Detection ekranı
-    ├── history_screen.dart    ← Geçmiş ekranı
-    └── settings_screen.dart   ← Ayarlar ekranı
+Capstone4992/
+├── lib/
+│   ├── main.dart                  # Uygulama giriş noktası
+│   ├── screens/
+│   │   ├── camera_screen.dart     # Ana tanıma ekranı
+│   │   ├── history_screen.dart    # Çeviri geçmişi
+│   │   └── settings_screen.dart   # Backend URL ayarları
+│   ├── services/
+│   │   ├── api_service.dart       # HTTP istemcisi (predict/sentence/landmarks)
+│   │   └── camera_service.dart    # Kamera yönetimi
+│   ├── models/
+│   │   ├── prediction_result.dart # Tahmin modeli
+│   │   └── translation_entry.dart # Geçmiş kaydı modeli
+│   ├── widgets/
+│   │   ├── bottom_nav.dart        # Alt navigasyon barı
+│   │   └── type_badge.dart        # Dil rozeti widget'ı
+│   └── theme/
+│       └── app_theme.dart         # Renk paleti ve tema
+├── ios/
+├── pubspec.yaml
+└── analysis_options.yaml
 ```
 
 ---
 
-## Backend Entegrasyonu
+## Bağımlılıklar
 
-Backend hazır olduğunda değiştirilecek yerler:
-
-### Kamera → Model sonuçları (`camera_screen.dart`)
-```dart
-// Şu an sabit:
-final String _detectedText = 'Merhaba, ben doktorunuzum...';
-final List<String> _keywords = ['MERHABA', 'BEN', 'DOKTOR'];
-
-// Backend'den WebSocket/HTTP ile alınacak:
-// ws://your-api/stream  → { text, keywords, confidence }
-```
-
-### Geçmiş (`history_screen.dart`)
-```dart
-// Şu an: mock veriler (models/translation_entry.dart)
-// Değiştirilecek: GET /api/history  → List<TranslationEntry>
-```
-
-### Ayarlar — Kullanıcı (`settings_screen.dart`)
-```dart
-// Şu an: hardcoded 'Ayşe Yılmaz', 'Pro plan · TSİD + TİD'
-// Değiştirilecek: GET /api/user/profile
-```
-
----
-
-## Kamera Entegrasyonu (Gerçek Kamera)
-
-Gerçek kamera feed'i için `camera` paketini ekle:
-
-```yaml
-# pubspec.yaml'a ekle:
-dependencies:
-  camera: ^0.10.5+9
-```
-
-`camera_screen.dart` içindeki fake kamera alanını `CameraPreview(controller)` ile değiştir.
-
-iOS için `Info.plist`'e izin ekle:
-```xml
-<key>NSCameraUsageDescription</key>
-<string>İşaret dili algılaması için kamera gereklidir.</string>
-```
-
-Android için `AndroidManifest.xml`'e:
-```xml
-<uses-permission android:name="android.permission.CAMERA" />
-```
+| Paket | Kullanım |
+|---|---|
+| `camera` | Kamera akışı ve frame yakalama |
+| `http` | Backend ile REST iletişimi |
+| `shared_preferences` | Backend URL kalıcı saklama |
+| `provider` | Durum yönetimi |
+| `google_fonts` | Tipografi |
+| `flutter_animate` | Geçiş animasyonları |
+| `go_router` | Sayfa yönlendirmesi |
+| `permission_handler` | Kamera izin yönetimi |

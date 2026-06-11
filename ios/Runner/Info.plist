@@ -28,6 +28,13 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>İşaret dili tanıma için kameraya erişim gereklidir.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Geliştirme sırasında Flutter araçlarıyla ve yerel sunucuyla iletişim için yerel ağ erişimi gereklidir.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_dartobservatory._tcp</string>
+		<string>_dartVmService._tcp</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

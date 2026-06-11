@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/prediction_result.dart';
 
 class ApiService {
   // Platform başına varsayılan adresler:
@@ -29,39 +28,6 @@ class ApiService {
     _baseUrl = url.trimRight().replaceAll(RegExp(r'/+$'), '');
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_urlKey, _baseUrl);
-  }
-
-  Future<bool> checkHealth() async {
-    try {
-      final res = await http
-          .get(Uri.parse('$_baseUrl/health'))
-          .timeout(const Duration(seconds: 3));
-      return res.statusCode == 200;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// 30 adet base64 JPEG frame gönderir, tahmin döner.
-  Future<PredictionResult?> predict(
-    List<String> base64Frames, {
-    String language = 'tr',
-  }) async {
-    try {
-      final res = await http
-          .post(
-            Uri.parse('$_baseUrl/predict'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'frames': base64Frames, 'language': language}),
-          )
-          .timeout(const Duration(seconds: 8));
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body) as Map<String, dynamic>;
-        return PredictionResult.fromJson(data);
-      }
-    } catch (_) {}
-    return null;
   }
 
   /// Kelime listesinden akıcı cümle üretir (Ollama/Qwen).

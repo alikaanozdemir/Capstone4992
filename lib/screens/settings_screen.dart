@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../services/language_notifier.dart';
+import '../services/theme_notifier.dart';
+import '../services/history_service.dart';
 import '../theme/app_theme.dart';
-import '../services/api_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -10,29 +13,17 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _autoSpeak = true;
   bool _saveHistory = true;
-  String _model = 'TSİD v2.1';
-  String _inferenceMode = 'Hibrit';
-  String _subtitleSize = 'Büyük';
-  late TextEditingController _urlController;
-
-  @override
-  void initState() {
-    super.initState();
-    _urlController = TextEditingController(text: ApiService.baseUrl);
-  }
-
-  @override
-  void dispose() {
-    _urlController.dispose();
-    super.dispose();
-  }
+  String _subtitleSize = 'Large';
 
   @override
   Widget build(BuildContext context) {
+    final isTr = context.watch<LanguageNotifier>().isTurkish;
+    final themeNotifier = context.watch<ThemeNotifier>();
+    final c = AppColors.of(context);
+
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: c.bg,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -41,237 +32,100 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               const SizedBox(height: 16),
 
-              // User card
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppColors.bgCard,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.border, width: 0.5),
-                ),
-                child: Row(
-                  children: [
-                    // Avatar
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: AppColors.green,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Center(
-                        child: Text(
-                          'AY',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Ayşe Yılmaz',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.text,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.bgCard2,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Text(
-                            'Pro plan · TSİD + TİD',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textSub,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Spacer(),
-                    const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // MODEL section
-              _SectionLabel(label: 'MODEL'),
+              // GÖRÜNÜM / APPEARANCE section
+              _SectionLabel(label: isTr ? 'GÖRÜNÜM' : 'APPEARANCE', c: c),
               const SizedBox(height: 8),
-              _SettingsCard(children: [
-                _SelectTile(
-                  icon: Icons.sign_language_rounded,
-                  iconColor: AppColors.green,
-                  title: 'İşaret dili',
-                  value: _model,
-                  onTap: () => _showPicker(
-                    context,
-                    title: 'İşaret Dili Modeli',
-                    options: ['TSİD v2.1', 'TSİD v1.8', 'TİD Beta'],
-                    selected: _model,
-                    onSelect: (v) => setState(() => _model = v),
+              _SettingsCard(c: c, children: [
+                ListTile(
+                  leading: _IconBox(
+                    icon: themeNotifier.isDark
+                        ? Icons.dark_mode_rounded
+                        : Icons.light_mode_rounded,
+                    color: themeNotifier.isDark
+                        ? const Color(0xFF9B59B6)
+                        : const Color(0xFFF39C12),
                   ),
-                ),
-                _Divider(),
-                _SelectTile(
-                  icon: Icons.memory_rounded,
-                  iconColor: AppColors.teal,
-                  title: 'Çıkarım modu',
-                  value: _inferenceMode,
-                  onTap: () => _showPicker(
-                    context,
-                    title: 'Çıkarım Modu',
-                    options: ['Hibrit', 'Sadece Cihaz', 'Bulut'],
-                    selected: _inferenceMode,
-                    onSelect: (v) => setState(() => _inferenceMode = v),
+                  title: Text(
+                    isTr ? 'Karanlık mod' : 'Dark mode',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: c.text,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
+                  trailing: Switch.adaptive(
+                    value: themeNotifier.isDark,
+                    onChanged: (_) => themeNotifier.toggle(),
+                    activeColor: AppColors.green,
+                  ),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                 ),
               ]),
 
               const SizedBox(height: 20),
 
-              // BAĞLANTI section
-              _SectionLabel(label: 'BAĞLANTI'),
+              // OUTPUT section
+              _SectionLabel(label: isTr ? 'ÇIKTI' : 'OUTPUT', c: c),
               const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                decoration: BoxDecoration(
-                  color: AppColors.bgCard,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.border, width: 0.5),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: AppColors.green.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Icon(Icons.cloud_outlined,
-                          size: 17, color: AppColors.green),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: TextField(
-                        controller: _urlController,
-                        style: const TextStyle(
-                            fontSize: 13, color: AppColors.text),
-                        decoration: const InputDecoration(
-                          labelText: 'Backend URL',
-                          labelStyle:
-                              TextStyle(fontSize: 12, color: AppColors.textSub),
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                        keyboardType: TextInputType.url,
-                        autocorrect: false,
-                        onSubmitted: (_) => _saveBackendUrl(),
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: _saveBackendUrl,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppColors.green,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text('Kaydet',
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // ÇIKTI section
-              _SectionLabel(label: 'ÇIKTI'),
-              const SizedBox(height: 8),
-              _SettingsCard(children: [
-                _ToggleTile(
-                  icon: Icons.volume_up_rounded,
-                  iconColor: const Color(0xFF9B59B6),
-                  title: 'Otomatik seslendir',
-                  value: _autoSpeak,
-                  onChanged: (v) => setState(() => _autoSpeak = v),
-                ),
-                _Divider(),
+              _SettingsCard(c: c, children: [
                 _SelectTile(
                   icon: Icons.text_fields_rounded,
                   iconColor: const Color(0xFFE67E22),
-                  title: 'Altyazı boyutu',
+                  title: isTr ? 'Altyazı boyutu' : 'Subtitle size',
                   value: _subtitleSize,
+                  c: c,
                   onTap: () => _showPicker(
                     context,
-                    title: 'Altyazı Boyutu',
-                    options: ['Küçük', 'Orta', 'Büyük', 'Çok Büyük'],
+                    title: isTr ? 'Altyazı Boyutu' : 'Subtitle Size',
+                    options: isTr
+                        ? ['Küçük', 'Orta', 'Büyük', 'Çok Büyük']
+                        : ['Small', 'Medium', 'Large', 'Extra Large'],
                     selected: _subtitleSize,
                     onSelect: (v) => setState(() => _subtitleSize = v),
+                    c: c,
                   ),
                 ),
-                _Divider(),
+                _Divider(c: c),
                 _ToggleTile(
                   icon: Icons.history_rounded,
                   iconColor: const Color(0xFF3498DB),
-                  title: 'Geçmişi kaydet',
+                  title: isTr ? 'Geçmişi kaydet' : 'Save history',
                   value: _saveHistory,
+                  c: c,
                   onChanged: (v) => setState(() => _saveHistory = v),
                 ),
               ]),
 
               const SizedBox(height: 20),
 
-              // GİZLİLİK section
-              _SectionLabel(label: 'GİZLİLİK'),
+              // PRIVACY section
+              _SectionLabel(label: isTr ? 'GİZLİLİK' : 'PRIVACY', c: c),
               const SizedBox(height: 8),
-              _SettingsCard(children: [
+              _SettingsCard(c: c, children: [
                 _TapTile(
                   icon: Icons.delete_outline_rounded,
                   iconColor: const Color(0xFFE74C3C),
-                  title: 'Geçmişi temizle',
-                  onTap: () => _confirmClear(context),
+                  title: isTr ? 'Geçmişi temizle' : 'Clear history',
+                  c: c,
+                  onTap: () => _confirmClear(context, isTr, c),
                 ),
-                _Divider(),
+                _Divider(c: c),
                 _TapTile(
                   icon: Icons.shield_outlined,
-                  iconColor: AppColors.textSub,
-                  title: 'Gizlilik politikası',
-                  onTap: () {},
+                  iconColor: c.textSub,
+                  title: isTr ? 'Gizlilik politikası' : 'Privacy policy',
+                  c: c,
+                  onTap: () => _showPrivacyPolicy(context, isTr, c),
                 ),
               ]),
 
               const SizedBox(height: 32),
 
-              // Version
               Center(
                 child: Text(
                   'Sign App v1.0.0',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textMuted,
-                  ),
+                  style: TextStyle(fontSize: 12, color: c.textMuted),
                 ),
               ),
               const SizedBox(height: 16),
@@ -282,31 +136,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _saveBackendUrl() async {
-    final url = _urlController.text.trim();
-    if (url.isEmpty) return;
-    await ApiService.saveUrl(url);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Backend URL güncellendi: $url'),
-        backgroundColor: AppColors.green,
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
   void _showPicker(
     BuildContext context, {
     required String title,
     required List<String> options,
     required String selected,
     required ValueChanged<String> onSelect,
+    required AppColorSet c,
   }) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.bgCard,
+      backgroundColor: c.bgCard,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -319,20 +159,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: AppColors.border,
+                color: c.border,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             const SizedBox(height: 16),
             Text(title,
-                style: const TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.text)),
+                style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700, color: c.text)),
             const SizedBox(height: 12),
             ...options.map((o) => ListTile(
                   title: Text(o,
                       style: TextStyle(
-                          color: o == selected ? AppColors.green : AppColors.text,
-                          fontWeight: o == selected ? FontWeight.w700 : FontWeight.w400)),
+                          color: o == selected ? AppColors.green : c.text,
+                          fontWeight: o == selected
+                              ? FontWeight.w700
+                              : FontWeight.w400)),
                   trailing: o == selected
                       ? const Icon(Icons.check_rounded, color: AppColors.green)
                       : null,
@@ -347,24 +189,104 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _confirmClear(BuildContext context) {
+  void _showPrivacyPolicy(BuildContext context, bool isTr, AppColorSet c) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: c.bgCard,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        builder: (_, scrollController) => SingleChildScrollView(
+          controller: scrollController,
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: c.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                isTr ? 'Gizlilik Politikası' : 'Privacy Policy',
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: c.text),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                isTr
+                    ? 'Sign App, kameranızı yalnızca gerçek zamanlı işaret dili tanıma için kullanır. '
+                        'Tüm işlemler cihazınızda gerçekleştirilir — harici sunuculara video veya görüntü iletilmez.\n\n'
+                        'Çeviri geçmişi, cihazınızda yerel olarak saklanır. '
+                        'Geçmişinizi istediğiniz zaman Ayarlar\'daki Gizlilik bölümünden silebilirsiniz.\n\n'
+                        'Herhangi bir kişisel veri toplamıyor, paylaşmıyor veya satmıyoruz. '
+                        'Uygulama, hesap kaydı veya giriş gerektirmez.\n\n'
+                        'Kamera izinleri yalnızca işaret dili tespiti için kullanılır. '
+                        'Bu izinler, cihaz ayarlarınızdan istediğiniz zaman iptal edilebilir.'
+                    : 'Sign App uses your device camera solely for real-time sign language recognition. '
+                        'All processing is performed on-device — no video or images are transmitted to external servers.\n\n'
+                        'Translation history is stored locally on your device. '
+                        'You can delete your history at any time from the Privacy section in Settings.\n\n'
+                        'We do not collect, share, or sell any personal data. '
+                        'The app does not require account registration or login.\n\n'
+                        'Camera permissions are used exclusively for sign language detection. '
+                        'These permissions can be revoked at any time through your device settings.',
+                style: TextStyle(fontSize: 14, color: c.textSub, height: 1.6),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                isTr ? 'Son güncelleme: Haziran 2025' : 'Last updated: June 2025',
+                style: TextStyle(fontSize: 12, color: c.textMuted),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _confirmClear(BuildContext context, bool isTr, AppColorSet c) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppColors.bgCard,
-        title: const Text('Geçmişi Temizle', style: TextStyle(color: AppColors.text)),
-        content: const Text(
-          'Tüm çeviri geçmişi silinecek. Devam etmek istiyor musunuz?',
-          style: TextStyle(color: AppColors.textSub),
+        backgroundColor: c.bgCard,
+        title: Text(
+          isTr ? 'Geçmişi Temizle' : 'Clear History',
+          style: TextStyle(color: c.text),
+        ),
+        content: Text(
+          isTr
+              ? 'Tüm çeviri geçmişi silinecek. Devam edilsin mi?'
+              : 'All translation history will be deleted. Continue?',
+          style: TextStyle(color: c.textSub),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('İptal', style: TextStyle(color: AppColors.textSub)),
+            child: Text(
+              isTr ? 'İptal' : 'Cancel',
+              style: TextStyle(color: c.textSub),
+            ),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Temizle', style: TextStyle(color: Color(0xFFE74C3C))),
+            onPressed: () async {
+              await HistoryService.clear();
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('Clear', style: TextStyle(color: Color(0xFFE74C3C))),
           ),
         ],
       ),
@@ -376,17 +298,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
 class _SectionLabel extends StatelessWidget {
   final String label;
-  const _SectionLabel({required this.label});
+  final AppColorSet c;
+  const _SectionLabel({required this.label, required this.c});
 
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(left: 4),
         child: Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            color: AppColors.textSub,
+            color: c.textSub,
             letterSpacing: 1.2,
           ),
         ),
@@ -395,25 +318,29 @@ class _SectionLabel extends StatelessWidget {
 
 class _SettingsCard extends StatelessWidget {
   final List<Widget> children;
-  const _SettingsCard({required this.children});
+  final AppColorSet c;
+  const _SettingsCard({required this.children, required this.c});
 
   @override
   Widget build(BuildContext context) => Container(
         decoration: BoxDecoration(
-          color: AppColors.bgCard,
+          color: c.bgCard,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.border, width: 0.5),
+          border: Border.all(color: c.border, width: 0.5),
         ),
         child: Column(children: children),
       );
 }
 
 class _Divider extends StatelessWidget {
+  final AppColorSet c;
+  const _Divider({required this.c});
+
   @override
-  Widget build(BuildContext context) => const Divider(
+  Widget build(BuildContext context) => Divider(
         height: 0.5,
         thickness: 0.5,
-        color: AppColors.border,
+        color: c.border,
         indent: 52,
       );
 }
@@ -424,6 +351,7 @@ class _ToggleTile extends StatelessWidget {
   final String title;
   final bool value;
   final ValueChanged<bool> onChanged;
+  final AppColorSet c;
 
   const _ToggleTile({
     required this.icon,
@@ -431,19 +359,22 @@ class _ToggleTile extends StatelessWidget {
     required this.title,
     required this.value,
     required this.onChanged,
+    required this.c,
   });
 
   @override
   Widget build(BuildContext context) => ListTile(
         leading: _IconBox(icon: icon, color: iconColor),
         title: Text(title,
-            style: const TextStyle(fontSize: 14, color: AppColors.text, fontWeight: FontWeight.w500)),
+            style: TextStyle(
+                fontSize: 14, color: c.text, fontWeight: FontWeight.w500)),
         trailing: Switch.adaptive(
           value: value,
           onChanged: onChanged,
           activeColor: AppColors.green,
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       );
 }
 
@@ -453,6 +384,7 @@ class _SelectTile extends StatelessWidget {
   final String title;
   final String value;
   final VoidCallback onTap;
+  final AppColorSet c;
 
   const _SelectTile({
     required this.icon,
@@ -460,24 +392,26 @@ class _SelectTile extends StatelessWidget {
     required this.title,
     required this.value,
     required this.onTap,
+    required this.c,
   });
 
   @override
   Widget build(BuildContext context) => ListTile(
         leading: _IconBox(icon: icon, color: iconColor),
         title: Text(title,
-            style: const TextStyle(fontSize: 14, color: AppColors.text, fontWeight: FontWeight.w500)),
+            style: TextStyle(
+                fontSize: 14, color: c.text, fontWeight: FontWeight.w500)),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(value,
-                style: const TextStyle(fontSize: 13, color: AppColors.textSub)),
+            Text(value, style: TextStyle(fontSize: 13, color: c.textSub)),
             const SizedBox(width: 4),
-            const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted, size: 18),
+            Icon(Icons.chevron_right_rounded, color: c.textMuted, size: 18),
           ],
         ),
         onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       );
 }
 
@@ -486,22 +420,26 @@ class _TapTile extends StatelessWidget {
   final Color iconColor;
   final String title;
   final VoidCallback onTap;
+  final AppColorSet c;
 
   const _TapTile({
     required this.icon,
     required this.iconColor,
     required this.title,
     required this.onTap,
+    required this.c,
   });
 
   @override
   Widget build(BuildContext context) => ListTile(
         leading: _IconBox(icon: icon, color: iconColor),
         title: Text(title,
-            style: const TextStyle(fontSize: 14, color: AppColors.text, fontWeight: FontWeight.w500)),
-        trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted, size: 18),
+            style: TextStyle(
+                fontSize: 14, color: c.text, fontWeight: FontWeight.w500)),
+        trailing: Icon(Icons.chevron_right_rounded, color: c.textMuted, size: 18),
         onTap: onTap,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       );
 }
 

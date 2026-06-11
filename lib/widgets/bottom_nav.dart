@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
+import '../services/language_notifier.dart';
 
 class AppBottomNav extends StatelessWidget {
   final int currentIndex;
@@ -13,10 +15,12 @@ class AppBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isTr = context.watch<LanguageNotifier>().isTurkish;
+    final c = AppColors.of(context);
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.bgCard,
-        border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
+        color: c.bgCard,
+        border: Border(top: BorderSide(color: c.border, width: 0.5)),
       ),
       child: SafeArea(
         top: false,
@@ -25,9 +29,9 @@ class AppBottomNav extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _NavItem(icon: Icons.camera_alt_outlined, label: 'Kamera', index: 0, currentIndex: currentIndex, onTap: onTap),
-              _NavItem(icon: Icons.history_rounded, label: 'Geçmiş', index: 1, currentIndex: currentIndex, onTap: onTap),
-              _NavItem(icon: Icons.settings_outlined, label: 'Ayarlar', index: 2, currentIndex: currentIndex, onTap: onTap),
+              _NavItem(icon: Icons.camera_alt_outlined, label: isTr ? 'Kamera' : 'Camera', index: 0, currentIndex: currentIndex, onTap: onTap),
+              _NavItem(icon: Icons.history_rounded, label: isTr ? 'Geçmiş' : 'History', index: 1, currentIndex: currentIndex, onTap: onTap),
+              _NavItem(icon: Icons.settings_outlined, label: isTr ? 'Ayarlar' : 'Settings', index: 2, currentIndex: currentIndex, onTap: onTap),
             ],
           ),
         ),
@@ -70,7 +74,7 @@ class _NavItem extends StatelessWidget {
             Icon(
               icon,
               size: 22,
-              color: isSelected ? AppColors.green : AppColors.textMuted,
+              color: isSelected ? AppColors.green : AppColors.of(context).textMuted,
             ),
             const SizedBox(height: 4),
             Text(
@@ -78,7 +82,7 @@ class _NavItem extends StatelessWidget {
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
-                color: isSelected ? AppColors.green : AppColors.textMuted,
+                color: isSelected ? AppColors.green : AppColors.of(context).textMuted,
               ),
             ),
           ],

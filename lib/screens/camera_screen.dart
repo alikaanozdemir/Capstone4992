@@ -2,10 +2,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import '../services/camera_service.dart';
 import '../services/api_service.dart';
 import '../services/on_device_sign_service.dart';
+import '../services/history_service.dart';
+import '../services/language_notifier.dart';
+import '../models/translation_entry.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -16,29 +21,24 @@ class CameraScreen extends StatefulWidget {
 
 class _CameraScreenState extends State<CameraScreen>
     with TickerProviderStateMixin {
-  // ── Animasyonlar ──────────────────────────────────────────────────────────
   late AnimationController _pulseController;
   late AnimationController _dotController;
   late Animation<double> _pulseAnim;
 
-  // ── Servisler ─────────────────────────────────────────────────────────────
   final CameraService _cam = CameraService();
   final ApiService _api = ApiService();
   final OnDeviceSignService _onDevice = OnDeviceSignService();
 
-  // ── Durum ─────────────────────────────────────────────────────────────────
   bool _camReady = false;
   bool _onDeviceReady = false;
-  String _statusMsg = 'Başlatılıyor...';
+  String _statusMsg = 'Starting...';
 
-  // Tanıma çıktısı
   String _sentence = '';
   final _words = <String>[];
   double _confidence = 0.0;
   bool _thinking = false;
-  String _language = 'en'; // 'tr' = AUTSL (Türkçe), 'en' = ASL Citizen (İngilizce)
+  String _language = 'en';
 
-  // İskelet görselleştirme
   List<double>? _poseLandmarks;
   List<double>? _lhLandmarks;
   List<double>? _rhLandmarks;
@@ -46,11 +46,9 @@ class _CameraScreenState extends State<CameraScreen>
   Timer? _captureTimer;
   bool _capturing = false;
 
-  // Sessizlik sayacı (kelime gelmeyi bırakınca cümleye dönüştür)
   Timer? _silenceTimer;
   static const Duration _silence = Duration(seconds: 3);
 
-  // ── Init / Dispose ────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
@@ -75,21 +73,15 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _startup() async {
-    // On-device servisi arka planda başlat
     _initOnDevice();
-
-    // Kamerayı aç
     try {
       await _cam.initialize();
       if (mounted) {
-        setState(() {
-          _camReady = true;
-          _statusMsg = 'Hazır — işaret yapın';
-        });
+        setState(() { _camReady = true; _statusMsg = 'Ready'; });
         _startCapture();
       }
     } catch (e) {
-      if (mounted) setState(() => _statusMsg = 'Kamera hatası: $e');
+      if (mounted) setState(() => _statusMsg = 'Camera error: $e');
     }
   }
 
@@ -99,19 +91,11 @@ class _CameraScreenState extends State<CameraScreen>
       if (mounted) setState(() => _onDeviceReady = true);
     } catch (e, st) {
       debugPrint('[OnDevice INIT ERROR] $e\n$st');
-      if (mounted) {
-        setState(() {
-          _onDeviceReady = false;
-          _statusMsg = 'Model yüklenemedi: $e';
-        });
-      }
+      if (mounted) setState(() => _onDeviceReady = false);
     }
   }
 
-  // ── Frame yakalama ────────────────────────────────────────────────────────
-
   void _startCapture() {
-    // Her 100ms'de bir fotoğraf çek → 30 frame ≈ 3 saniye (model 25fps video ile eğitildi)
     _captureTimer = Timer.periodic(
       const Duration(milliseconds: 100),
       (_) => _captureFrame(),
@@ -159,8 +143,15 @@ class _CameraScreenState extends State<CameraScreen>
     final ws = List<String>.from(_words);
     final s = await _api.constructSentence(ws, language: _language);
     if (!mounted) return;
+    final sentence = s ?? ws.join(' ');
+    await HistoryService.add(TranslationEntry(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      text: sentence,
+      type: _language == 'tr' ? TranslationType.TSID : TranslationType.TID,
+      createdAt: DateTime.now(),
+    ));
     setState(() {
-      _sentence = s ?? ws.join(' ');
+      _sentence = sentence;
       _thinking = false;
       _words.clear();
       _confidence = 0;
@@ -192,22 +183,20 @@ class _CameraScreenState extends State<CameraScreen>
     super.dispose();
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final isTr = context.watch<LanguageNotifier>().isTurkish;
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: c.bg,
       body: SafeArea(
         child: Column(
           children: [
-            // ── Dil seçici ────────────────────────────────────────────────
+            // Model + UI lang selector
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: Row(
                 children: [
-                  const Text('Model:',
-                      style: TextStyle(fontSize: 12, color: AppColors.textSub)),
-                  const SizedBox(width: 8),
                   _LangButton(
                     label: 'TR (AUTSL)',
                     active: _language == 'tr',
@@ -219,7 +208,7 @@ class _CameraScreenState extends State<CameraScreen>
                   ),
                   const SizedBox(width: 6),
                   _LangButton(
-                    label: 'EN (ASL Citizen)',
+                    label: 'EN (ASL)',
                     active: _language == 'en',
                     onTap: () {
                       setState(() { _language = 'en'; _onDeviceReady = false; });
@@ -228,12 +217,13 @@ class _CameraScreenState extends State<CameraScreen>
                     },
                   ),
                   const Spacer(),
-                  _OnDeviceStatusBadge(ready: _onDeviceReady),
+                  const _UiLangToggle(),
                 ],
               ),
             ),
             const SizedBox(height: 4),
-            // ── Kamera alanı ──────────────────────────────────────────────
+
+            // Camera area
             Expanded(
               flex: 5,
               child: Stack(
@@ -243,14 +233,13 @@ class _CameraScreenState extends State<CameraScreen>
                     decoration: BoxDecoration(
                       color: const Color(0xFF0A1628),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppColors.border, width: 0.5),
+                      border: Border.all(color: c.border, width: 0.5),
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(20),
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          // Gerçek kamera ya da yükleniyor
                           _camReady && _cam.controller != null
                               ? CameraPreview(_cam.controller!)
                               : Center(
@@ -265,7 +254,7 @@ class _CameraScreenState extends State<CameraScreen>
                                       Text(
                                         _statusMsg,
                                         style: const TextStyle(
-                                          color: AppColors.textSub,
+                                          color: Color(0xFF8B949E),
                                           fontSize: 13,
                                         ),
                                         textAlign: TextAlign.center,
@@ -274,13 +263,11 @@ class _CameraScreenState extends State<CameraScreen>
                                   ),
                                 ),
 
-                          // Grid çizgileri (hafif overlay)
                           CustomPaint(
                             size: Size.infinite,
                             painter: _GridPainter(),
                           ),
 
-                          // İskelet overlay
                           if (_poseLandmarks != null)
                             CustomPaint(
                               size: Size.infinite,
@@ -291,28 +278,16 @@ class _CameraScreenState extends State<CameraScreen>
                               ),
                             ),
 
-                          // Gerçek iskelet gelene kadar placeholder kutu
-                          if (_camReady && _poseLandmarks == null)
-                            Center(
-                              child: AnimatedBuilder(
-                                animation: _pulseAnim,
-                                builder: (_, child) => Transform.scale(
-                                  scale: _pulseAnim.value,
-                                  child: child,
-                                ),
-                                child: const _HandDetectionBox(),
-                              ),
-                            ),
-
-                          // Alt sol — CANLI rozeti
                           if (_camReady)
                             Positioned(
                               bottom: 16,
                               left: 16,
-                              child: _LiveBadge(dotController: _dotController),
+                              child: _LiveBadge(
+                                dotController: _dotController,
+                                label: isTr ? 'CANLI' : 'LIVE',
+                              ),
                             ),
 
-                          // Sağ üst — güven skoru
                           if (_confidence > 0)
                             Positioned(
                               top: 16,
@@ -342,7 +317,7 @@ class _CameraScreenState extends State<CameraScreen>
               ),
             ),
 
-            // ── Kelime chip'leri ──────────────────────────────────────────
+            // Word chips
             SizedBox(
               height: 44,
               child: _words.isEmpty
@@ -358,25 +333,24 @@ class _CameraScreenState extends State<CameraScreen>
 
             const SizedBox(height: 12),
 
-            // ── Cümle paneli ──────────────────────────────────────────────
+            // Sentence panel
             Expanded(
               flex: 2,
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 16),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppColors.bgCard,
+                  color: c.bgCard,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.border, width: 0.5),
+                  border: Border.all(color: c.border, width: 0.5),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Metin ya da yükleniyor
                     if (_thinking)
-                      const Row(
+                      Row(
                         children: [
-                          SizedBox(
+                          const SizedBox(
                             width: 12,
                             height: 12,
                             child: CircularProgressIndicator(
@@ -384,11 +358,10 @@ class _CameraScreenState extends State<CameraScreen>
                               strokeWidth: 1.5,
                             ),
                           ),
-                          SizedBox(width: 8),
+                          const SizedBox(width: 8),
                           Text(
-                            'Cümle oluşturuluyor...',
-                            style: TextStyle(
-                                color: AppColors.textSub, fontSize: 13),
+                            isTr ? 'Cümle oluşturuluyor...' : 'Building sentence...',
+                            style: TextStyle(color: c.textSub, fontSize: 13),
                           ),
                         ],
                       )
@@ -396,12 +369,10 @@ class _CameraScreenState extends State<CameraScreen>
                       Text(
                         _sentence.isNotEmpty
                             ? _sentence
-                            : 'İşaret yapmaya başlayın...',
+                            : (isTr ? 'İşaret yapmaya başlayın...' : 'Start signing...'),
                         style: TextStyle(
                           fontSize: 15,
-                          color: _sentence.isNotEmpty
-                              ? AppColors.text
-                              : AppColors.textMuted,
+                          color: _sentence.isNotEmpty ? c.text : c.textMuted,
                           fontWeight: FontWeight.w500,
                           height: 1.4,
                         ),
@@ -409,26 +380,30 @@ class _CameraScreenState extends State<CameraScreen>
 
                     const Spacer(),
 
-                    // Aksiyon butonları
                     Row(
                       children: [
                         _ActionButton(
-                          icon: Icons.volume_up_rounded,
-                          label: 'Seslendir',
-                          onTap: () {},
-                        ),
-                        const SizedBox(width: 8),
-                        _ActionButton(
                           icon: Icons.refresh_rounded,
-                          label: 'Temizle',
+                          label: isTr ? 'Temizle' : 'Clear',
                           isPrimary: true,
                           onTap: _clear,
                         ),
                         const SizedBox(width: 8),
                         _ActionButton(
                           icon: Icons.copy_rounded,
-                          label: 'Kopyala',
-                          onTap: () {},
+                          label: isTr ? 'Kopyala' : 'Copy',
+                          onTap: () {
+                            if (_sentence.isEmpty) return;
+                            Clipboard.setData(ClipboardData(text: _sentence));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(isTr ? 'Kopyalandı' : 'Copied'),
+                                backgroundColor: AppColors.green,
+                                duration: const Duration(seconds: 1),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),
@@ -446,161 +421,8 @@ class _CameraScreenState extends State<CameraScreen>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Sub-widgets (orijinal tasarım korundu)
+// Sub-widgets
 // ═══════════════════════════════════════════════════════════════════════════
-
-class _HandDetectionBox extends StatelessWidget {
-  const _HandDetectionBox();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 180,
-      height: 220,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.green, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.green.withValues(alpha: 0.25),
-            blurRadius: 24,
-            spreadRadius: 4,
-          ),
-        ],
-      ),
-      child: Stack(
-        children: [
-          ..._buildCorners(),
-          Center(
-            child: Icon(
-              Icons.back_hand_outlined,
-              size: 80,
-              color: AppColors.green.withValues(alpha: 0.3),
-            ),
-          ),
-          ..._buildSkeletonDots(),
-        ],
-      ),
-    );
-  }
-
-  List<Widget> _buildCorners() {
-    const size = 14.0;
-    const thick = 2.5;
-    const color = AppColors.greenLight;
-    return const [
-      Positioned(top: -1, left: -1, child: _Corner(color: color, size: size, thickness: thick, topLeft: true)),
-      Positioned(top: -1, right: -1, child: _Corner(color: color, size: size, thickness: thick, topRight: true)),
-      Positioned(bottom: -1, left: -1, child: _Corner(color: color, size: size, thickness: thick, bottomLeft: true)),
-      Positioned(bottom: -1, right: -1, child: _Corner(color: color, size: size, thickness: thick, bottomRight: true)),
-    ];
-  }
-
-  List<Widget> _buildSkeletonDots() {
-    const positions = [
-      Offset(0.5, 0.15), Offset(0.35, 0.25), Offset(0.65, 0.25),
-      Offset(0.3, 0.45), Offset(0.7, 0.45), Offset(0.4, 0.65),
-      Offset(0.6, 0.65), Offset(0.5, 0.8),
-    ];
-    return positions
-        .map((p) => Positioned(
-              left: p.dx * 160 + 10,
-              top: p.dy * 200 + 10,
-              child: Container(
-                width: 5,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: AppColors.green,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.green.withValues(alpha: 0.6),
-                      blurRadius: 4,
-                    ),
-                  ],
-                ),
-              ),
-            ))
-        .toList();
-  }
-}
-
-class _Corner extends StatelessWidget {
-  final Color color;
-  final double size;
-  final double thickness;
-  final bool topLeft, topRight, bottomLeft, bottomRight;
-
-  const _Corner({
-    required this.color,
-    required this.size,
-    required this.thickness,
-    this.topLeft = false,
-    this.topRight = false,
-    this.bottomLeft = false,
-    this.bottomRight = false,
-  });
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: size,
-        height: size,
-        child: CustomPaint(
-          painter: _CornerPainter(
-            color: color,
-            thickness: thickness,
-            topLeft: topLeft,
-            topRight: topRight,
-            bottomLeft: bottomLeft,
-            bottomRight: bottomRight,
-          ),
-        ),
-      );
-}
-
-class _CornerPainter extends CustomPainter {
-  final Color color;
-  final double thickness;
-  final bool topLeft, topRight, bottomLeft, bottomRight;
-
-  _CornerPainter({
-    required this.color,
-    required this.thickness,
-    this.topLeft = false,
-    this.topRight = false,
-    this.bottomLeft = false,
-    this.bottomRight = false,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = thickness
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
-    if (topLeft) {
-      canvas.drawLine(Offset(0, size.height), Offset.zero, paint);
-      canvas.drawLine(Offset.zero, Offset(size.width, 0), paint);
-    }
-    if (topRight) {
-      canvas.drawLine(Offset.zero, Offset(size.width, 0), paint);
-      canvas.drawLine(Offset(size.width, 0), Offset(size.width, size.height), paint);
-    }
-    if (bottomLeft) {
-      canvas.drawLine(Offset.zero, Offset(0, size.height), paint);
-      canvas.drawLine(Offset(0, size.height), Offset(size.width, size.height), paint);
-    }
-    if (bottomRight) {
-      canvas.drawLine(Offset(size.width, 0), Offset(size.width, size.height), paint);
-      canvas.drawLine(Offset(0, size.height), Offset(size.width, size.height), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_CornerPainter old) => false;
-}
 
 class _GridPainter extends CustomPainter {
   @override
@@ -623,7 +445,8 @@ class _GridPainter extends CustomPainter {
 
 class _LiveBadge extends StatelessWidget {
   final AnimationController dotController;
-  const _LiveBadge({required this.dotController});
+  final String label;
+  const _LiveBadge({required this.dotController, required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -658,9 +481,9 @@ class _LiveBadge extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          const Text(
-            '● CANLI',
-            style: TextStyle(
+          Text(
+            '● $label',
+            style: const TextStyle(
               fontSize: 11,
               color: AppColors.green,
               fontWeight: FontWeight.w700,
@@ -713,16 +536,17 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: isPrimary ? AppColors.green : AppColors.bgCard2,
+          color: isPrimary ? AppColors.green : c.bgCard2,
           borderRadius: BorderRadius.circular(10),
           border: isPrimary
               ? null
-              : Border.all(color: AppColors.border, width: 0.5),
+              : Border.all(color: c.border, width: 0.5),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -745,9 +569,9 @@ class _ActionButton extends StatelessWidget {
 }
 
 class _SkeletonPainter extends CustomPainter {
-  final List<double> poseLandmarks; // 33 × 4 (x, y, z, visibility)
-  final List<double>? lhLandmarks;  // 21 × 3 (x, y, z)
-  final List<double>? rhLandmarks;  // 21 × 3 (x, y, z)
+  final List<double> poseLandmarks;
+  final List<double>? lhLandmarks;
+  final List<double>? rhLandmarks;
 
   const _SkeletonPainter({
     required this.poseLandmarks,
@@ -819,7 +643,6 @@ class _SkeletonPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    // Vücut iskeletini çiz
     for (final c in _poseConnections) {
       if (_poseVis(c[0]) > 0.3 && _poseVis(c[1]) > 0.3) {
         canvas.drawLine(_posePoint(c[0], size), _posePoint(c[1], size), bodyLine);
@@ -831,7 +654,6 @@ class _SkeletonPainter extends CustomPainter {
       }
     }
 
-    // El iskeletini çiz
     void drawHand(List<double>? kp, Paint line) {
       if (!_handPresent(kp)) return;
       final dot = Paint()
@@ -856,27 +678,63 @@ class _SkeletonPainter extends CustomPainter {
       rhLandmarks != old.rhLandmarks;
 }
 
-class _OnDeviceStatusBadge extends StatelessWidget {
-  final bool ready;
-  const _OnDeviceStatusBadge({required this.ready});
+class _UiLangToggle extends StatelessWidget {
+  const _UiLangToggle();
 
   @override
   Widget build(BuildContext context) {
-    final color = ready ? AppColors.green : const Color(0xFFE5A500);
-    final label = ready ? 'On-Device ✓' : 'On-Device…';
+    final notifier = context.watch<LanguageNotifier>();
+    final isTr = notifier.isTurkish;
+    final c = AppColors.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: color,
+        color: c.bgCard2,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color, width: 0.5),
+        border: Border.all(color: c.border, width: 0.5),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 11,
-          color: Colors.white,
-          fontWeight: FontWeight.w700,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _UiLangOption(
+            label: 'TR',
+            active: isTr,
+            onTap: () => context.read<LanguageNotifier>().setLanguage('tr'),
+          ),
+          _UiLangOption(
+            label: 'EN',
+            active: !isTr,
+            onTap: () => context.read<LanguageNotifier>().setLanguage('en'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UiLangOption extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+  const _UiLangOption({required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: active ? AppColors.green : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: active ? Colors.white : c.textSub,
+          ),
         ),
       ),
     );
@@ -891,15 +749,16 @@ class _LangButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: active ? AppColors.green : AppColors.bgCard2,
+          color: active ? AppColors.green : c.bgCard2,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: active ? AppColors.green : AppColors.border,
+            color: active ? AppColors.green : c.border,
             width: 0.5,
           ),
         ),
@@ -907,7 +766,7 @@ class _LangButton extends StatelessWidget {
           label,
           style: TextStyle(
             fontSize: 11,
-            color: active ? Colors.white : AppColors.textSub,
+            color: active ? Colors.white : c.textSub,
             fontWeight: active ? FontWeight.w700 : FontWeight.w400,
           ),
         ),

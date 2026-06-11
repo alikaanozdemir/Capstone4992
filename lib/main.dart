@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/camera_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 import 'widgets/bottom_nav.dart';
 import 'services/api_service.dart';
+import 'services/language_notifier.dart';
+import 'services/theme_notifier.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,15 +17,15 @@ void main() async {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: AppColors.bgCard,
-      systemNavigationBarIconBrightness: Brightness.light,
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => LanguageNotifier()),
+        ChangeNotifierProvider(create: (_) => ThemeNotifier()),
+      ],
+      child: const SignApp(),
     ),
   );
-  runApp(const SignApp());
 }
 
 class SignApp extends StatelessWidget {
@@ -30,10 +33,13 @@ class SignApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeNotifier = context.watch<ThemeNotifier>();
     return MaterialApp(
       title: 'Sign App',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark,
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
+      themeMode: themeNotifier.mode,
       home: const MainShell(),
     );
   }
@@ -57,8 +63,15 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = context.watch<ThemeNotifier>().isDark;
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor: AppColors.of(context).bgCard,
+      systemNavigationBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+    ));
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: AppColors.of(context).bg,
       body: IndexedStack(
         index: _currentIndex,
         children: _screens,

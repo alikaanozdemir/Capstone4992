@@ -46,6 +46,9 @@ class _CameraScreenState extends State<CameraScreen>
   Timer? _captureTimer;
   bool _capturing = false;
 
+  int _frameCount = 0;
+  DateTime _fpsStart = DateTime.now();
+
   Timer? _silenceTimer;
   static const Duration _silence = Duration(seconds: 3);
 
@@ -125,6 +128,16 @@ class _CameraScreenState extends State<CameraScreen>
         }
       });
       if (r.word != null) _resetSilence();
+
+      if (OnDeviceSignService.kBenchmark) {
+        _frameCount++;
+        final dt = DateTime.now().difference(_fpsStart);
+        if (dt.inMilliseconds >= 1000) {
+          debugPrint('[BENCH] FPS: $_frameCount');
+          _frameCount = 0;
+          _fpsStart = DateTime.now();
+        }
+      }
     } catch (e, st) {
       debugPrint('[CaptureFrame ERROR] $e\n$st');
     } finally {

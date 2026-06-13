@@ -29,6 +29,9 @@ class FrameResult {
 ///   4. ONNX → sınıf + güven skoru
 ///   5. Momentum filtresi (aynı etiket MOMENTUM kez üst üste gelmeli)
 class OnDeviceSignService {
+  /// Üretimde kapatılabilir benchmark log flag'i — [BENCH] satırları bu bayrağa bağlı.
+  static const bool kBenchmark = true;
+
   final _mp = MediaPipeChannelService();
   final _ort = SignRecognizerService();
 
@@ -120,7 +123,13 @@ class OnDeviceSignService {
   /// Dönüş: FrameResult (word null olabilir — sadece kp güncellemesi).
   Future<FrameResult> processFrame(String base64Frame) async {
     // 1. Keypoints çıkar
+    Stopwatch? mpWatch;
+    if (kBenchmark) mpWatch = Stopwatch()..start();
     final kp = await _mp.extractKeypoints(base64Frame);
+    if (kBenchmark) {
+      mpWatch!.stop();
+      debugPrint('[BENCH] mediapipe: ${mpWatch.elapsedMilliseconds} ms');
+    }
     final extractOk = kp != null && kp.length == SignRecognizerService.featureDim;
     if (extractOk != _lastExtractOk) {
       _lastExtractOk = extractOk;
@@ -174,7 +183,13 @@ class OnDeviceSignService {
     }
 
     // 4. ONNX inference
+    Stopwatch? inferWatch;
+    if (kBenchmark) inferWatch = Stopwatch()..start();
     final prediction = await _ort.predict(_kpBuf);
+    if (kBenchmark) {
+      inferWatch!.stop();
+      debugPrint('[BENCH] inference: ${inferWatch.elapsedMilliseconds} ms');
+    }
     if (prediction == null) {
       return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm);
     }

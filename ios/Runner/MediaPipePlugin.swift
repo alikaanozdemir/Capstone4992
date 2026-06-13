@@ -80,6 +80,7 @@ class MediaPipePlugin: NSObject, FlutterPlugin {
 
         let options = HolisticLandmarkerOptions()
         options.baseOptions.modelAssetPath = taskPath
+        options.baseOptions.delegate = .GPU
         options.runningMode = .image
         options.minFaceDetectionConfidence    = 0.5
         options.minFacePresenceConfidence     = 0.5
@@ -128,19 +129,6 @@ class MediaPipePlugin: NSObject, FlutterPlugin {
         return buffer
     }
 
-    /// Kameranın sensorOrientation açısını (saat yönünde, görüntüyü dik yapmak için
-    /// gereken döndürme) MPImage'ın beklediği UIImage.Orientation'a çevirir.
-    /// Not: Geri kamera için kalibre edildi; ön kamera kullanılacaksa (mirror)
-    /// gerçek cihazda test edilip *Mirrored varyantlarına göre güncellenmeli.
-    private func imageOrientation(forRotationDegrees degrees: Int) -> UIImage.Orientation {
-        switch degrees {
-        case 90:  return .right
-        case 180: return .down
-        case 270: return .left
-        default:  return .up
-        }
-    }
-
     // ── Keypoint çıkarımı ─────────────────────────────────────────────────────
 
     private func extractKeypoints(bgraBytes: Data, width: Int, height: Int, bytesPerRow: Int, rotationDegrees: Int) -> [Float]? {
@@ -153,11 +141,11 @@ class MediaPipePlugin: NSObject, FlutterPlugin {
             return nil
         }
 
-        let orientation = imageOrientation(forRotationDegrees: rotationDegrees)
-
+        // Option A: BGRA kamera akışı zaten dik (upright) geliyor; HolisticLandmarker
+        // .up dışındaki orientation değerlerini Code=3 ile reddediyor.
         let mpImage: MPImage
         do {
-            mpImage = try MPImage(pixelBuffer: pixelBuffer, orientation: orientation)
+            mpImage = try MPImage(pixelBuffer: pixelBuffer, orientation: .up)
         } catch {
             print("[MediaPipePlugin] MPImage init hatası: \(error), size=\(width)x\(height)")
             return nil

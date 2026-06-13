@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.holisticlandmarker.HolisticLandmarker
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -63,6 +64,7 @@ class MediaPipePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 .setBaseOptions(
                     BaseOptions.builder()
                         .setModelAssetPath("holistic_landmarker.task")
+                        .setDelegate(Delegate.GPU)
                         .build()
                 )
                 .setRunningMode(RunningMode.IMAGE)

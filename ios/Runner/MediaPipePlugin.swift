@@ -1,13 +1,15 @@
 import Flutter
 import UIKit
+import CoreVideo
 import MediaPipeTasksVision
 
-/// Flutter MethodChannel handler — MediaPipe HolisticLandmarker
+/// Flutter ↔ Swift köprüsü: MediaPipe HolisticLandmarker
 ///
 /// Kanal adı: "sign.language.mediapipe"
 /// Metodlar:
-///   initialize()                         → holistic_landmarker.task'ı yükle
-///   extractKeypoints(frame: String)      → [Float] (1692 eleman) döner
+///   initialize()      → holistic_landmarker.task'ı yükle
+///   extractKeypoints(width, height, rotation, planes, bytesPerRow, bytesPerPixel)
+///     → [Float] (1692 eleman) döner. [planes] BGRA8888 tek plane içerir.
 class MediaPipePlugin: NSObject, FlutterPlugin {
 
     private var landmarker: HolisticLandmarker?
@@ -39,12 +41,25 @@ class MediaPipePlugin: NSObject, FlutterPlugin {
 
         case "extractKeypoints":
             guard let args = call.arguments as? [String: Any],
-                  let base64 = args["frame"] as? String else {
-                result(FlutterError(code: "BAD_ARGS", message: "frame eksik", details: nil))
+                  let width = args["width"] as? Int,
+                  let height = args["height"] as? Int,
+                  let rotation = args["rotation"] as? Int,
+                  let bytesPerRowList = args["bytesPerRow"] as? [Int],
+                  let bytesPerRow = bytesPerRowList.first,
+                  let planes = args["planes"] as? [FlutterStandardTypedData],
+                  let plane = planes.first else {
+                result(FlutterError(code: "BAD_ARGS", message: "frame verisi eksik/bozuk", details: nil))
                 return
             }
+            let bgraBytes = plane.data
             DispatchQueue.global(qos: .userInitiated).async {
-                let kp = self.extractKeypoints(from: base64)
+                let kp = self.extractKeypoints(
+                    bgraBytes: bgraBytes,
+                    width: width,
+                    height: height,
+                    bytesPerRow: bytesPerRow,
+                    rotationDegrees: rotation
+                )
                 DispatchQueue.main.async {
                     result(kp)
                 }
@@ -74,42 +89,77 @@ class MediaPipePlugin: NSObject, FlutterPlugin {
         landmarker = try HolisticLandmarker(options: options)
     }
 
-    // ── Yardımcılar ───────────────────────────────────────────────────────────
+    // ── Ham frame → CVPixelBuffer ────────────────────────────────────────────
 
-    /// EXIF yönlendirmesini piksellere "pişirerek" imageOrientation = .up yapar.
-    private func normalizedToUp(_ image: UIImage) -> UIImage {
-        if image.imageOrientation == .up { return image }
-        let renderer = UIGraphicsImageRenderer(size: image.size)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: image.size))
+    /// Kameradan gelen ham BGRA8888 byte'larından bir CVPixelBuffer oluşturur.
+    private func makePixelBuffer(from bytes: Data, width: Int, height: Int, bytesPerRow: Int) -> CVPixelBuffer? {
+        var pixelBuffer: CVPixelBuffer?
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
+        ]
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault, width, height,
+            kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pixelBuffer
+        )
+        guard status == kCVReturnSuccess, let buffer = pixelBuffer else { return nil }
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+        let destBytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+
+        bytes.withUnsafeBytes { (src: UnsafeRawBufferPointer) in
+            guard let srcBase = src.baseAddress else { return }
+            if destBytesPerRow == bytesPerRow {
+                memcpy(baseAddress, srcBase, bytes.count)
+            } else {
+                let rowBytes = min(bytesPerRow, destBytesPerRow)
+                for row in 0..<height {
+                    memcpy(
+                        baseAddress.advanced(by: row * destBytesPerRow),
+                        srcBase.advanced(by: row * bytesPerRow),
+                        rowBytes
+                    )
+                }
+            }
+        }
+
+        return buffer
+    }
+
+    /// Kameranın sensorOrientation açısını (saat yönünde, görüntüyü dik yapmak için
+    /// gereken döndürme) MPImage'ın beklediği UIImage.Orientation'a çevirir.
+    /// Not: Geri kamera için kalibre edildi; ön kamera kullanılacaksa (mirror)
+    /// gerçek cihazda test edilip *Mirrored varyantlarına göre güncellenmeli.
+    private func imageOrientation(forRotationDegrees degrees: Int) -> UIImage.Orientation {
+        switch degrees {
+        case 90:  return .right
+        case 180: return .down
+        case 270: return .left
+        default:  return .up
         }
     }
 
     // ── Keypoint çıkarımı ─────────────────────────────────────────────────────
 
-    private func extractKeypoints(from base64: String) -> [Float]? {
+    private func extractKeypoints(bgraBytes: Data, width: Int, height: Int, bytesPerRow: Int, rotationDegrees: Int) -> [Float]? {
         guard let landmarker = landmarker else {
             print("[MediaPipePlugin] landmarker nil (init başarısız)")
             return nil
         }
-        guard let data = Data(base64Encoded: base64) else {
-            print("[MediaPipePlugin] base64 decode başarısız, len=\(base64.count)")
-            return nil
-        }
-        guard let uiImage = UIImage(data: data) else {
-            print("[MediaPipePlugin] UIImage decode başarısız, bytes=\(data.count)")
+        guard let pixelBuffer = makePixelBuffer(from: bgraBytes, width: width, height: height, bytesPerRow: bytesPerRow) else {
+            print("[MediaPipePlugin] CVPixelBuffer oluşturulamadı, size=\(width)x\(height)")
             return nil
         }
 
-        // HolisticLandmarker yalnızca imageOrientation = .up destekler;
-        // kameradan gelen JPEG'ler genelde .right/.left EXIF yönüyle gelir.
-        let uprightImage = normalizedToUp(uiImage)
+        let orientation = imageOrientation(forRotationDegrees: rotationDegrees)
 
         let mpImage: MPImage
         do {
-            mpImage = try MPImage(uiImage: uprightImage)
+            mpImage = try MPImage(pixelBuffer: pixelBuffer, orientation: orientation)
         } catch {
-            print("[MediaPipePlugin] MPImage init hatası: \(error), size=\(uprightImage.size), orientation=\(uprightImage.imageOrientation.rawValue)")
+            print("[MediaPipePlugin] MPImage init hatası: \(error), size=\(width)x\(height)")
             return nil
         }
 

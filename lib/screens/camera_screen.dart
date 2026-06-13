@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import '../services/camera_service.dart';
 import '../services/api_service.dart';
+import '../services/mediapipe_channel_service.dart';
 import '../services/on_device_sign_service.dart';
 import '../services/history_service.dart';
 import '../services/language_notifier.dart';
@@ -43,7 +43,6 @@ class _CameraScreenState extends State<CameraScreen>
   List<double>? _lhLandmarks;
   List<double>? _rhLandmarks;
 
-  Timer? _captureTimer;
   bool _capturing = false;
 
   int _frameCount = 0;
@@ -99,21 +98,33 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _startCapture() {
-    _captureTimer = Timer.periodic(
-      const Duration(milliseconds: 100),
-      (_) => _captureFrame(),
+    _cam.startImageStream(_onCameraImage);
+  }
+
+  /// Kamera akışından gelen her kare için çağrılır (Android: YUV420, iOS: BGRA8888).
+  /// MediaPipe/ONNX 30fps'e yetişemediği için işlenmekte olan bir kare varsa
+  /// gelen yeni kareler atlanır.
+  void _onCameraImage(CameraImage image) {
+    if (_capturing || !_camReady || !_onDeviceReady) return;
+    _capturing = true;
+    _processImage(image).whenComplete(() => _capturing = false);
+  }
+
+  CameraFrame _toCameraFrame(CameraImage image) {
+    return CameraFrame(
+      width: image.width,
+      height: image.height,
+      rotationDegrees: _cam.sensorOrientation,
+      planes: image.planes.map((p) => p.bytes).toList(),
+      bytesPerRow: image.planes.map((p) => p.bytesPerRow).toList(),
+      bytesPerPixel: image.planes.map((p) => p.bytesPerPixel ?? 1).toList(),
     );
   }
 
-  Future<void> _captureFrame() async {
-    if (_capturing || !_camReady || !_onDeviceReady) return;
-    _capturing = true;
+  Future<void> _processImage(CameraImage image) async {
     try {
-      final file = await _cam.takePicture();
-      final bytes = await file.readAsBytes();
-      final b64 = base64Encode(bytes);
-
-      final r = await _onDevice.processFrame(b64);
+      final frame = _toCameraFrame(image);
+      final r = await _onDevice.processFrame(frame);
       if (!mounted) return;
       setState(() {
         _confidence = r.confidence;
@@ -140,8 +151,6 @@ class _CameraScreenState extends State<CameraScreen>
       }
     } catch (e, st) {
       debugPrint('[CaptureFrame ERROR] $e\n$st');
-    } finally {
-      _capturing = false;
     }
   }
 
@@ -189,7 +198,6 @@ class _CameraScreenState extends State<CameraScreen>
   void dispose() {
     _pulseController.dispose();
     _dotController.dispose();
-    _captureTimer?.cancel();
     _silenceTimer?.cancel();
     _cam.dispose();
     _onDevice.dispose();

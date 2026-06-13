@@ -2,10 +2,7 @@ package com.example.sign_app
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Matrix
-import android.media.ExifInterface
-import android.util.Base64
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
@@ -13,7 +10,6 @@ import com.google.mediapipe.tasks.vision.holisticlandmarker.HolisticLandmarker
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import java.io.ByteArrayInputStream
 import java.util.concurrent.Executors
 
 class MediaPipePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
@@ -39,13 +35,21 @@ class MediaPipePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         when (call.method) {
             "initialize" -> initialize(result)
             "extractKeypoints" -> {
-                val frame = call.argument<String>("frame")
-                if (frame == null) {
-                    result.error("INVALID", "frame is null", null)
+                val width = call.argument<Int>("width")
+                val height = call.argument<Int>("height")
+                val rotation = call.argument<Int>("rotation") ?: 0
+                @Suppress("UNCHECKED_CAST")
+                val planes = call.argument<List<ByteArray>>("planes")
+                val bytesPerRow = call.argument<List<Int>>("bytesPerRow")
+                val bytesPerPixel = call.argument<List<Int>>("bytesPerPixel")
+                if (width == null || height == null || planes == null ||
+                    bytesPerRow == null || bytesPerPixel == null || planes.size < 3
+                ) {
+                    result.error("INVALID", "frame verisi eksik/bozuk", null)
                     return
                 }
                 executor.execute {
-                    val kp = extractKeypoints(frame)
+                    val kp = extractKeypoints(width, height, rotation, planes, bytesPerRow, bytesPerPixel)
                     result.success(kp)
                 }
             }
@@ -74,13 +78,19 @@ class MediaPipePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
-    private fun extractKeypoints(base64Frame: String): List<Double>? {
+    private fun extractKeypoints(
+        width: Int,
+        height: Int,
+        rotationDegrees: Int,
+        planes: List<ByteArray>,
+        bytesPerRow: List<Int>,
+        bytesPerPixel: List<Int>,
+    ): List<Double>? {
         val lm = landmarker ?: return null
 
-        val bytes = Base64.decode(base64Frame, Base64.DEFAULT)
-        val raw = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-        val bitmap = fixRotation(raw, bytes)
-        val mpImage = BitmapImageBuilder(bitmap).build()
+        val bitmap = yuv420ToBitmap(width, height, planes, bytesPerRow, bytesPerPixel)
+        val upright = rotateBitmap(bitmap, rotationDegrees)
+        val mpImage = BitmapImageBuilder(upright).build()
 
         val detection = try {
             lm.detect(mpImage)
@@ -139,19 +149,51 @@ class MediaPipePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return kp.toList()
     }
 
-    private fun fixRotation(bitmap: Bitmap, jpegBytes: ByteArray): Bitmap {
-        val exif = try {
-            ExifInterface(ByteArrayInputStream(jpegBytes))
-        } catch (e: Exception) {
-            return bitmap
+    /// YUV_420_888 (ayrı Y/U/V plane'leri, stride'lara göre) → ARGB_8888 Bitmap.
+    /// ITU-R BT.601 limited-range dönüşümü, tamsayı aritmetiği ile.
+    private fun yuv420ToBitmap(
+        width: Int,
+        height: Int,
+        planes: List<ByteArray>,
+        bytesPerRow: List<Int>,
+        bytesPerPixel: List<Int>,
+    ): Bitmap {
+        val yPlane = planes[0]
+        val uPlane = planes[1]
+        val vPlane = planes[2]
+        val yRowStride = bytesPerRow[0]
+        val uvRowStride = bytesPerRow[1]
+        val uvPixelStride = bytesPerPixel[1]
+
+        val argb = IntArray(width * height)
+        for (row in 0 until height) {
+            val yRowOffset = row * yRowStride
+            val uvRowOffset = (row shr 1) * uvRowStride
+            for (col in 0 until width) {
+                val y = yPlane[yRowOffset + col].toInt() and 0xFF
+                val uvIndex = uvRowOffset + (col shr 1) * uvPixelStride
+                val u = (uPlane[uvIndex].toInt() and 0xFF) - 128
+                val v = (vPlane[uvIndex].toInt() and 0xFF) - 128
+
+                val c = y - 16
+                var r = (298 * c + 409 * v + 128) shr 8
+                var g = (298 * c - 100 * u - 208 * v + 128) shr 8
+                var b = (298 * c + 516 * u + 128) shr 8
+
+                r = r.coerceIn(0, 255)
+                g = g.coerceIn(0, 255)
+                b = b.coerceIn(0, 255)
+
+                argb[row * width + col] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
         }
-        val degrees = when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
-            ExifInterface.ORIENTATION_ROTATE_90  -> 90f
-            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-            else -> return bitmap
-        }
-        val matrix = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    /// Görüntüyü dik (upright) hale getirmek için saat yönünde döndürür.
+    private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
+        if (degrees == 0) return bitmap
+        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 }

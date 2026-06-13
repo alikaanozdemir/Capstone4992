@@ -119,13 +119,13 @@ class OnDeviceSignService {
   // ── Ana işlem döngüsü ─────────────────────────────────────────────────────
 
   /// Her kamera frame'i için çağrılır.
-  /// [base64Frame]: base64 JPEG.
+  /// [frame]: kameradan gelen ham görüntü karesi (YUV420/BGRA8888).
   /// Dönüş: FrameResult (word null olabilir — sadece kp güncellemesi).
-  Future<FrameResult> processFrame(String base64Frame) async {
+  Future<FrameResult> processFrame(CameraFrame frame) async {
     // 1. Keypoints çıkar
     Stopwatch? mpWatch;
     if (kBenchmark) mpWatch = Stopwatch()..start();
-    final kp = await _mp.extractKeypoints(base64Frame);
+    final kp = await _mp.extractKeypoints(frame);
     if (kBenchmark) {
       mpWatch!.stop();
       debugPrint('[BENCH] mediapipe: ${mpWatch.elapsedMilliseconds} ms');

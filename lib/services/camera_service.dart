@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:camera/camera.dart';
 
 class CameraService {
@@ -7,6 +8,9 @@ class CameraService {
   CameraController? get controller => _controller;
   bool get isInitialized => _isInitialized;
 
+  /// Görüntüyü dik (upright) hale getirmek için saat yönünde döndürme açısı.
+  int get sensorOrientation => _controller?.description.sensorOrientation ?? 0;
+
   Future<void> initialize() async {
     final cameras = await availableCameras();
     if (cameras.isEmpty) throw Exception('Hiç kamera bulunamadı');
@@ -15,17 +19,20 @@ class CameraService {
       cameras.first,
       ResolutionPreset.medium,
       enableAudio: false,
+      imageFormatGroup: Platform.isAndroid
+          ? ImageFormatGroup.yuv420
+          : ImageFormatGroup.bgra8888,
     );
     await _controller!.initialize();
     _isInitialized = true;
   }
 
-  /// JPEG baytı döner — base64 encode etmek için hazır.
-  Future<XFile> takePicture() async {
+  /// Ham kamera kare akışını başlatır (Android: YUV420, iOS: BGRA8888).
+  void startImageStream(void Function(CameraImage image) onFrame) {
     if (!_isInitialized || _controller == null) {
       throw Exception('Kamera henüz hazır değil');
     }
-    return _controller!.takePicture();
+    _controller!.startImageStream(onFrame);
   }
 
   void dispose() {

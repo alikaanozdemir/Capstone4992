@@ -1,6 +1,7 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 
@@ -29,10 +30,8 @@ class SignRecognizerService {
 
     // Model bytes'ı asset'ten yükle
     final modelData = await rootBundle.load('assets/models/model_$dataset.onnx');
-    _session = OrtSession.fromBuffer(
-      modelData.buffer.asUint8List(),
-      OrtSessionOptions(),
-    );
+    final opts = _buildSessionOptions();
+    _session = OrtSession.fromBuffer(modelData.buffer.asUint8List(), opts);
 
     // Preprocessing meta verisi
     final metaStr = await rootBundle.loadString('assets/models/preprocess_$dataset.json');
@@ -48,6 +47,25 @@ class SignRecognizerService {
     }
 
     _initialized = true;
+  }
+
+  /// Platforma göre donanım hızlandırma execution provider'larını ekler.
+  /// Desteklenmeyen op'lar (MatMulInteger, DynamicQuantizeLSTM) otomatik
+  /// olarak CPU'ya düşer — XNNPACK/CPU her zaman fallback olarak eklenir.
+  OrtSessionOptions _buildSessionOptions() {
+    final opts = OrtSessionOptions();
+    try {
+      if (Platform.isAndroid) {
+        opts.appendNnapiProvider(NnapiFlags.useNone);    // NPU/GPU/DSP
+      } else if (Platform.isIOS) {
+        opts.appendCoreMLProvider(CoreMLFlags.useNone);  // Apple Neural Engine
+      }
+    } catch (e) {
+      debugPrint('[ORT] donanım delegate eklenemedi, CPU fallback: $e');
+    }
+    try { opts.appendXnnpackProvider(); } catch (_) {}   // optimize CPU
+    try { opts.appendCPUProvider(CPUFlags.useNone); } catch (_) {}
+    return opts;
   }
 
   // ── Preprocessing ─────────────────────────────────────────────────────────

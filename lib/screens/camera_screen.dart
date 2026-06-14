@@ -2,10 +2,10 @@ import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
 import '../services/camera_service.dart';
-import '../services/api_service.dart';
 import '../services/mediapipe_channel_service.dart';
 import '../services/on_device_sign_service.dart';
 import '../services/history_service.dart';
@@ -19,6 +19,10 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
+/// Kamera preview üzerinde [BENCH] metriklerini canlı gösteren debug overlay.
+/// Üretim build'inde kapatmak için `false` yapın.
+const bool kShowDebugOverlay = true;
+
 class _CameraScreenState extends State<CameraScreen>
     with TickerProviderStateMixin {
   late AnimationController _pulseController;
@@ -26,8 +30,8 @@ class _CameraScreenState extends State<CameraScreen>
   late Animation<double> _pulseAnim;
 
   final CameraService _cam = CameraService();
-  final ApiService _api = ApiService();
   final OnDeviceSignService _onDevice = OnDeviceSignService();
+  final FlutterTts _tts = FlutterTts();
 
   bool _camReady = false;
   bool _onDeviceReady = false;
@@ -47,6 +51,11 @@ class _CameraScreenState extends State<CameraScreen>
 
   int _frameCount = 0;
   DateTime _fpsStart = DateTime.now();
+
+  // Debug overlay metrikleri (bkz. kShowDebugOverlay)
+  int _currentFps = 0;
+  int _lastMediapipeMs = 0;
+  int _lastInferenceMs = 0;
 
   Timer? _silenceTimer;
   static const Duration _silence = Duration(seconds: 3);
@@ -137,6 +146,8 @@ class _CameraScreenState extends State<CameraScreen>
           _words.add(r.word!);
           if (_words.length > 6) _words.removeAt(0);
         }
+        if (r.mediapipeMs != null) _lastMediapipeMs = r.mediapipeMs!;
+        if (r.inferenceMs != null) _lastInferenceMs = r.inferenceMs!;
       });
       if (r.word != null) _resetSilence();
 
@@ -145,6 +156,7 @@ class _CameraScreenState extends State<CameraScreen>
         final dt = DateTime.now().difference(_fpsStart);
         if (dt.inMilliseconds >= 1000) {
           debugPrint('[BENCH] FPS: $_frameCount');
+          if (mounted) setState(() => _currentFps = _frameCount);
           _frameCount = 0;
           _fpsStart = DateTime.now();
         }
@@ -159,13 +171,22 @@ class _CameraScreenState extends State<CameraScreen>
     _silenceTimer = Timer(_silence, _buildSentence);
   }
 
+  /// Kelimeleri tek bir cümleye birleştirir — tamamen cihaz üstü, ağ isteği yok.
+  String _composeSentence(List<String> words) {
+    final joined = words.join(' ').trim();
+    if (joined.isEmpty) return joined;
+    final capitalized = joined[0].toUpperCase() + joined.substring(1);
+    return RegExp(r'[.!?]$').hasMatch(capitalized)
+        ? capitalized
+        : '$capitalized.';
+  }
+
   Future<void> _buildSentence() async {
     if (_words.isEmpty) return;
     setState(() => _thinking = true);
     final ws = List<String>.from(_words);
-    final s = await _api.constructSentence(ws, language: _language);
+    final sentence = _composeSentence(ws);
     if (!mounted) return;
-    final sentence = s ?? ws.join(' ');
     await HistoryService.add(TranslationEntry(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       text: sentence,
@@ -178,6 +199,14 @@ class _CameraScreenState extends State<CameraScreen>
       _words.clear();
       _confidence = 0;
     });
+  }
+
+  /// Cümleyi cihaz üstü TTS ile seslendirir (tamamen offline).
+  Future<void> _speak() async {
+    if (_sentence.isEmpty) return;
+    await _tts.stop();
+    await _tts.setLanguage(_language == 'tr' ? 'tr-TR' : 'en-US');
+    await _tts.speak(_sentence);
   }
 
   void _clear() {
@@ -201,6 +230,7 @@ class _CameraScreenState extends State<CameraScreen>
     _silenceTimer?.cancel();
     _cam.dispose();
     _onDevice.dispose();
+    _tts.stop();
     super.dispose();
   }
 
@@ -330,6 +360,20 @@ class _CameraScreenState extends State<CameraScreen>
                                 ),
                               ),
                             ),
+
+                          if (kShowDebugOverlay)
+                            Positioned(
+                              top: 8,
+                              left: 8,
+                              child: IgnorePointer(
+                                child: _DebugOverlay(
+                                  fps: _currentFps,
+                                  mediapipeMs: _lastMediapipeMs,
+                                  inferenceMs: _lastInferenceMs,
+                                  provider: _onDevice.activeProvider,
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -403,28 +447,40 @@ class _CameraScreenState extends State<CameraScreen>
 
                     Row(
                       children: [
-                        _ActionButton(
-                          icon: Icons.refresh_rounded,
-                          label: isTr ? 'Temizle' : 'Clear',
-                          isPrimary: true,
-                          onTap: _clear,
+                        Expanded(
+                          child: _ActionButton(
+                            icon: Icons.refresh_rounded,
+                            label: isTr ? 'Temizle' : 'Clear',
+                            isPrimary: true,
+                            onTap: _clear,
+                          ),
                         ),
                         const SizedBox(width: 8),
-                        _ActionButton(
-                          icon: Icons.copy_rounded,
-                          label: isTr ? 'Kopyala' : 'Copy',
-                          onTap: () {
-                            if (_sentence.isEmpty) return;
-                            Clipboard.setData(ClipboardData(text: _sentence));
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(isTr ? 'Kopyalandı' : 'Copied'),
-                                backgroundColor: AppColors.green,
-                                duration: const Duration(seconds: 1),
-                                behavior: SnackBarBehavior.floating,
-                              ),
-                            );
-                          },
+                        Expanded(
+                          child: _ActionButton(
+                            icon: Icons.volume_up_rounded,
+                            label: isTr ? 'Sesli Oku' : 'Speak',
+                            onTap: _speak,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _ActionButton(
+                            icon: Icons.copy_rounded,
+                            label: isTr ? 'Kopyala' : 'Copy',
+                            onTap: () {
+                              if (_sentence.isEmpty) return;
+                              Clipboard.setData(ClipboardData(text: _sentence));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(isTr ? 'Kopyalandı' : 'Copied'),
+                                  backgroundColor: AppColors.green,
+                                  duration: const Duration(seconds: 1),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
+                          ),
                         ),
                       ],
                     ),
@@ -444,6 +500,48 @@ class _CameraScreenState extends State<CameraScreen>
 // ═══════════════════════════════════════════════════════════════════════════
 // Sub-widgets
 // ═══════════════════════════════════════════════════════════════════════════
+
+class _DebugOverlay extends StatelessWidget {
+  final int fps;
+  final int mediapipeMs;
+  final int inferenceMs;
+  final String provider;
+
+  const _DebugOverlay({
+    required this.fps,
+    required this.mediapipeMs,
+    required this.inferenceMs,
+    required this.provider,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+      color: Colors.greenAccent,
+      fontFamily: 'monospace',
+      fontSize: 11,
+      height: 1.4,
+    );
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('FPS: $fps', style: style),
+          Text('MP : $mediapipeMs ms', style: style),
+          Text('INF: $inferenceMs ms', style: style),
+          Text('TOT: ${mediapipeMs + inferenceMs} ms', style: style),
+          Text('EP : $provider', style: style),
+        ],
+      ),
+    );
+  }
+}
 
 class _GridPainter extends CustomPainter {
   @override
@@ -571,6 +669,7 @@ class _ActionButton extends StatelessWidget {
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, size: 15, color: Colors.white),
             const SizedBox(width: 5),

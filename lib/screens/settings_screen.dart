@@ -4,6 +4,7 @@ import '../services/language_notifier.dart';
 import '../services/theme_notifier.dart';
 import '../services/history_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/disclaimer_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -117,6 +118,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   title: isTr ? 'Gizlilik politikası' : 'Privacy policy',
                   c: c,
                   onTap: () => _showPrivacyPolicy(context, isTr, c),
+                ),
+                _Divider(c: c),
+                _TapTile(
+                  icon: Icons.info_outline_rounded,
+                  iconColor: c.textSub,
+                  title: isTr ? 'Önemli not' : 'Important notice',
+                  c: c,
+                  onTap: () => showDisclaimerDialog(context, isTr: isTr),
                 ),
               ]),
 

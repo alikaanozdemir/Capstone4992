@@ -10,6 +10,8 @@ class FrameResult {
   final List<double>? poseLm;   // 33×4 — görselleştirme için
   final List<double>? lhLm;    // 21×3
   final List<double>? rhLm;    // 21×3
+  final int? mediapipeMs;       // [BENCH] keypoint çıkarım süresi
+  final int? inferenceMs;       // [BENCH] ONNX predict süresi
 
   const FrameResult({
     this.word,
@@ -17,6 +19,8 @@ class FrameResult {
     this.poseLm,
     this.lhLm,
     this.rhLm,
+    this.mediapipeMs,
+    this.inferenceMs,
   });
 }
 
@@ -54,6 +58,9 @@ class OnDeviceSignService {
   bool? _lastGatesPassed;
 
   bool get isReady => _mp.isReady && _ort.isReady;
+
+  /// Aktif ONNX execution provider (CoreML/NNAPI/CPU) — debug overlay için.
+  String get activeProvider => _ort.activeProvider;
 
   Future<void> initialize(String language) async {
     await _mp.initialize();
@@ -126,9 +133,11 @@ class OnDeviceSignService {
     Stopwatch? mpWatch;
     if (kBenchmark) mpWatch = Stopwatch()..start();
     final kp = await _mp.extractKeypoints(frame);
+    int? mpMs;
     if (kBenchmark) {
       mpWatch!.stop();
-      debugPrint('[BENCH] mediapipe: ${mpWatch.elapsedMilliseconds} ms');
+      mpMs = mpWatch.elapsedMilliseconds;
+      debugPrint('[BENCH] mediapipe: $mpMs ms');
     }
     final extractOk = kp != null && kp.length == SignRecognizerService.featureDim;
     if (extractOk != _lastExtractOk) {
@@ -138,7 +147,7 @@ class OnDeviceSignService {
           : '[OnDevice] MediaPipe keypoints NULL/invalid (len=${kp?.length})');
     }
     if (!extractOk) {
-      return const FrameResult();
+      return FrameResult(mediapipeMs: mpMs);
     }
 
     _kpBuf.add(kp);
@@ -150,7 +159,7 @@ class OnDeviceSignService {
     final rhLm   = viz['rh'];
 
     if (_kpBuf.length < _bufSize) {
-      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm);
+      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm, mediapipeMs: mpMs);
     }
 
     // 2. Gate 1: Son 15 frame'in yarısında el olmalı
@@ -163,7 +172,7 @@ class OnDeviceSignService {
       }
       _pending = null;
       _streak = 0;
-      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm);
+      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm, mediapipeMs: mpMs);
     }
 
     // 3. Gate 2: Yeterli hareket
@@ -174,7 +183,7 @@ class OnDeviceSignService {
       }
       _pending = null;
       _streak = 0;
-      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm);
+      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm, mediapipeMs: mpMs);
     }
 
     if (_lastGatesPassed != true) {
@@ -186,12 +195,14 @@ class OnDeviceSignService {
     Stopwatch? inferWatch;
     if (kBenchmark) inferWatch = Stopwatch()..start();
     final prediction = await _ort.predict(_kpBuf);
+    int? infMs;
     if (kBenchmark) {
       inferWatch!.stop();
-      debugPrint('[BENCH] inference: ${inferWatch.elapsedMilliseconds} ms');
+      infMs = inferWatch.elapsedMilliseconds;
+      debugPrint('[BENCH] inference: $infMs ms');
     }
     if (prediction == null) {
-      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm);
+      return FrameResult(poseLm: poseLm, lhLm: lhLm, rhLm: rhLm, mediapipeMs: mpMs, inferenceMs: infMs);
     }
 
     final (label, conf) = prediction;
@@ -202,7 +213,7 @@ class OnDeviceSignService {
     if (conf < confThresh) {
       _pending = null;
       _streak = 0;
-      return FrameResult(confidence: conf, poseLm: poseLm, lhLm: lhLm, rhLm: rhLm);
+      return FrameResult(confidence: conf, poseLm: poseLm, lhLm: lhLm, rhLm: rhLm, mediapipeMs: mpMs, inferenceMs: infMs);
     }
 
     // 6. Momentum filtresi
@@ -221,10 +232,12 @@ class OnDeviceSignService {
         poseLm: poseLm,
         lhLm: lhLm,
         rhLm: rhLm,
+        mediapipeMs: mpMs,
+        inferenceMs: infMs,
       );
     }
 
-    return FrameResult(confidence: conf, poseLm: poseLm, lhLm: lhLm, rhLm: rhLm);
+    return FrameResult(confidence: conf, poseLm: poseLm, lhLm: lhLm, rhLm: rhLm, mediapipeMs: mpMs, inferenceMs: infMs);
   }
 
   void dispose() {

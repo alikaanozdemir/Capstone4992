@@ -1,5 +1,7 @@
 PODS:
   - Flutter (1.0.0)
+  - flutter_tts (0.0.1):
+    - Flutter
   - MediaPipeTasksCommon (0.10.35)
   - MediaPipeTasksVision (0.10.35):
     - MediaPipeTasksCommon (= 0.10.35)
@@ -14,6 +16,7 @@ PODS:
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
+  - flutter_tts (from `.symlinks/plugins/flutter_tts/ios`)
   - MediaPipeTasksVision
   - onnxruntime (from `.symlinks/plugins/onnxruntime/ios`)
 
@@ -27,11 +30,14 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
+  flutter_tts:
+    :path: ".symlinks/plugins/flutter_tts/ios"
   onnxruntime:
     :path: ".symlinks/plugins/onnxruntime/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_tts: 35ac3c7d42412733e795ea96ad2d7e05d0a75113
   MediaPipeTasksCommon: ae27d88c4d185db114a1a768c504f8270dda79b5
   MediaPipeTasksVision: 1d6c3efa89830a131dbd0dc4fb80dea283fac521
   onnxruntime: 2ab1957eb029c71d47f7bb35cc4efc9f0d297828

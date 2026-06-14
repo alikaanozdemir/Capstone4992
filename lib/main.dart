@@ -6,13 +6,13 @@ import 'screens/camera_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 import 'widgets/bottom_nav.dart';
-import 'services/api_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'services/language_notifier.dart';
 import 'services/theme_notifier.dart';
+import 'widgets/disclaimer_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await ApiService.loadUrl();
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -53,6 +53,8 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
+  static const _disclaimerSeenKey = 'disclaimer_seen';
+
   int _currentIndex = 0;
 
   final List<Widget> _screens = const [
@@ -60,6 +62,21 @@ class _MainShellState extends State<MainShell> {
     HistoryScreen(),
     SettingsScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowDisclaimer());
+  }
+
+  Future<void> _maybeShowDisclaimer() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_disclaimerSeenKey) ?? false) return;
+    if (!mounted) return;
+    final isTr = context.read<LanguageNotifier>().isTurkish;
+    await showDisclaimerDialog(context, isTr: isTr, barrierDismissible: false);
+    await prefs.setBool(_disclaimerSeenKey, true);
+  }
 
   @override
   Widget build(BuildContext context) {

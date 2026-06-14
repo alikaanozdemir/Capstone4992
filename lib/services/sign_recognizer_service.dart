@@ -20,8 +20,13 @@ class SignRecognizerService {
   static const int seqLen = 30;
   static const int featureDim = 1692;
 
+  String _activeProvider = 'CPU';
+
   bool get isReady => _initialized;
   List<String> get labels => _labels;
+
+  /// Aktif donanım hızlandırma execution provider'ı (CoreML/NNAPI/CPU) — debug overlay için.
+  String get activeProvider => _activeProvider;
 
   Future<void> initialize(String language) async {
     final dataset = language == 'tr' ? 'autsl' : 'asl_citizen';
@@ -57,11 +62,14 @@ class SignRecognizerService {
     try {
       if (Platform.isAndroid) {
         opts.appendNnapiProvider(NnapiFlags.useNone);    // NPU/GPU/DSP
+        _activeProvider = 'NNAPI';
       } else if (Platform.isIOS) {
         opts.appendCoreMLProvider(CoreMLFlags.useNone);  // Apple Neural Engine
+        _activeProvider = 'CoreML';
       }
     } catch (e) {
       debugPrint('[ORT] donanım delegate eklenemedi, CPU fallback: $e');
+      _activeProvider = 'CPU';
     }
     try { opts.appendXnnpackProvider(); } catch (_) {}   // optimize CPU
     try { opts.appendCPUProvider(CPUFlags.useNone); } catch (_) {}

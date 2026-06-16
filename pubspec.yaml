@@ -20,6 +20,7 @@ dependencies:
   shared_preferences: ^2.2.3
   onnxruntime: ^1.4.0
   flutter_tts: ^4.2.5
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
@@ -34,3 +35,9 @@ flutter:
     - assets/models/model_asl_citizen.onnx
     - assets/models/preprocess_autsl.json
     - assets/models/preprocess_asl_citizen.json
+    - assets/models/nmt_tr_en_encoder.onnx
+    - assets/models/nmt_tr_en_decoder.onnx
+    - assets/models/nmt_tr_en_vocab.json
+    - assets/models/nmt_en_fr_encoder.onnx
+    - assets/models/nmt_en_fr_decoder.onnx
+    - assets/models/nmt_en_fr_vocab.json

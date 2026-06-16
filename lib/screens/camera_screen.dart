@@ -10,6 +10,7 @@ import '../services/mediapipe_channel_service.dart';
 import '../services/on_device_sign_service.dart';
 import '../services/history_service.dart';
 import '../services/language_notifier.dart';
+import '../services/nmt_service.dart';
 import '../models/translation_entry.dart';
 
 class CameraScreen extends StatefulWidget {
@@ -31,6 +32,7 @@ class _CameraScreenState extends State<CameraScreen>
 
   final CameraService _cam = CameraService();
   final OnDeviceSignService _onDevice = OnDeviceSignService();
+  final NmtService _nmt = NmtService();
   final FlutterTts _tts = FlutterTts();
 
   bool _camReady = false;
@@ -46,6 +48,11 @@ class _CameraScreenState extends State<CameraScreen>
   List<double>? _poseLandmarks;
   List<double>? _lhLandmarks;
   List<double>? _rhLandmarks;
+
+  // NMT çeviri durumu
+  String _translationTarget = 'none'; // 'none' | 'en' | 'fr'
+  String _translatedSentence = '';
+  bool _translating = false;
 
   bool _capturing = false;
 
@@ -84,6 +91,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _startup() async {
+    _nmt.initialize(); // lazy — modeller arka planda yüklenir
     _initOnDevice();
     try {
       await _cam.initialize();
@@ -186,27 +194,56 @@ class _CameraScreenState extends State<CameraScreen>
     setState(() => _thinking = true);
     final ws = List<String>.from(_words);
     final sentence = _composeSentence(ws);
+
+    // NMT çevirisi — eğer hedef dil seçiliyse
+    String? translated;
+    if (_translationTarget != 'none') {
+      setState(() { _thinking = false; _translating = true; });
+      translated = await _nmt.translate(
+        sentence,
+        source: _language,
+        target: _translationTarget,
+      );
+    }
+
     if (!mounted) return;
     await HistoryService.add(TranslationEntry(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       text: sentence,
       type: _language == 'tr' ? TranslationType.TSID : TranslationType.TID,
       createdAt: DateTime.now(),
+      translatedText: translated,
+      targetLang: translated != null ? _translationTarget : null,
     ));
     setState(() {
       _sentence = sentence;
+      _translatedSentence = translated ?? '';
       _thinking = false;
+      _translating = false;
       _words.clear();
       _confidence = 0;
     });
   }
 
-  /// Cümleyi cihaz üstü TTS ile seslendirir (tamamen offline).
+  /// Cümleyi TTS ile seslendirir — çeviri varsa çevrilmiş metni hedef dilde okur.
   Future<void> _speak() async {
-    if (_sentence.isEmpty) return;
-    await _tts.stop();
-    await _tts.setLanguage(_language == 'tr' ? 'tr-TR' : 'en-US');
-    await _tts.speak(_sentence);
+    if (_translatedSentence.isNotEmpty) {
+      await _tts.stop();
+      await _tts.setLanguage(_targetTtsLang());
+      await _tts.speak(_translatedSentence);
+    } else if (_sentence.isNotEmpty) {
+      await _tts.stop();
+      await _tts.setLanguage(_language == 'tr' ? 'tr-TR' : 'en-US');
+      await _tts.speak(_sentence);
+    }
+  }
+
+  String _targetTtsLang() {
+    switch (_translationTarget) {
+      case 'fr': return 'fr-FR';
+      case 'en': return 'en-US';
+      default:   return _language == 'tr' ? 'tr-TR' : 'en-US';
+    }
   }
 
   void _clear() {
@@ -214,6 +251,8 @@ class _CameraScreenState extends State<CameraScreen>
     _onDevice.resetBuffer();
     setState(() {
       _sentence = '';
+      _translatedSentence = '';
+      _translating = false;
       _words.clear();
       _confidence = 0;
       _thinking = false;
@@ -230,6 +269,7 @@ class _CameraScreenState extends State<CameraScreen>
     _silenceTimer?.cancel();
     _cam.dispose();
     _onDevice.dispose();
+    _nmt.dispose();
     _tts.stop();
     super.dispose();
   }
@@ -252,7 +292,12 @@ class _CameraScreenState extends State<CameraScreen>
                     label: 'TR (AUTSL)',
                     active: _language == 'tr',
                     onTap: () {
-                      setState(() { _language = 'tr'; _onDeviceReady = false; });
+                      setState(() {
+                        _language = 'tr';
+                        _onDeviceReady = false;
+                        // EN→EN anlamsız olurdu; hedefi sıfırla
+                        if (_translationTarget == 'en') _translationTarget = 'none';
+                      });
                       _clear();
                       _initOnDevice();
                     },
@@ -262,7 +307,12 @@ class _CameraScreenState extends State<CameraScreen>
                     label: 'EN (ASL)',
                     active: _language == 'en',
                     onTap: () {
-                      setState(() { _language = 'en'; _onDeviceReady = false; });
+                      setState(() {
+                        _language = 'en';
+                        _onDeviceReady = false;
+                        // EN modelde TR→EN hedefi geçersiz
+                        if (_translationTarget == 'en') _translationTarget = 'none';
+                      });
                       _clear();
                       _initOnDevice();
                     },
@@ -273,6 +323,48 @@ class _CameraScreenState extends State<CameraScreen>
               ),
             ),
             const SizedBox(height: 4),
+
+            // NMT çeviri hedef satırı
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Row(
+                children: [
+                  Text(
+                    isTr ? 'Çeviri:' : 'Translate:',
+                    style: TextStyle(color: AppColors.of(context).textSub, fontSize: 11),
+                  ),
+                  const SizedBox(width: 8),
+                  _TranslateChip(
+                    label: isTr ? 'Yok' : 'Off',
+                    active: _translationTarget == 'none',
+                    onTap: () => setState(() {
+                      _translationTarget = 'none';
+                      _translatedSentence = '';
+                    }),
+                  ),
+                  if (_language == 'tr') ...[
+                    const SizedBox(width: 5),
+                    _TranslateChip(
+                      label: '→ EN',
+                      active: _translationTarget == 'en',
+                      onTap: () => setState(() {
+                        _translationTarget = 'en';
+                        _translatedSentence = '';
+                      }),
+                    ),
+                  ],
+                  const SizedBox(width: 5),
+                  _TranslateChip(
+                    label: '→ FR',
+                    active: _translationTarget == 'fr',
+                    onTap: () => setState(() {
+                      _translationTarget = 'fr';
+                      _translatedSentence = '';
+                    }),
+                  ),
+                ],
+              ),
+            ),
 
             // Camera area
             Expanded(
@@ -431,16 +523,68 @@ class _CameraScreenState extends State<CameraScreen>
                         ],
                       )
                     else
-                      Text(
-                        _sentence.isNotEmpty
-                            ? _sentence
-                            : (isTr ? 'İşaret yapmaya başlayın...' : 'Start signing...'),
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: _sentence.isNotEmpty ? c.text : c.textMuted,
-                          fontWeight: FontWeight.w500,
-                          height: 1.4,
-                        ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _sentence.isNotEmpty
+                                ? _sentence
+                                : (isTr ? 'İşaret yapmaya başlayın...' : 'Start signing...'),
+                            style: TextStyle(
+                              fontSize: 15,
+                              color: _sentence.isNotEmpty ? c.text : c.textMuted,
+                              fontWeight: FontWeight.w500,
+                              height: 1.4,
+                            ),
+                          ),
+                          if (_translating)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Row(
+                                children: [
+                                  const SizedBox(
+                                    width: 11,
+                                    height: 11,
+                                    child: CircularProgressIndicator(
+                                      color: AppColors.green,
+                                      strokeWidth: 1.5,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    isTr ? 'Çevriliyor...' : 'Translating...',
+                                    style: TextStyle(color: c.textSub, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else if (_translatedSentence.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(
+                                    Icons.translate_rounded,
+                                    size: 13,
+                                    color: AppColors.green,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Expanded(
+                                    child: Text(
+                                      _translatedSentence,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        color: AppColors.green,
+                                        fontWeight: FontWeight.w500,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
 
                     const Spacer(),
@@ -470,7 +614,10 @@ class _CameraScreenState extends State<CameraScreen>
                             label: isTr ? 'Kopyala' : 'Copy',
                             onTap: () {
                               if (_sentence.isEmpty) return;
-                              Clipboard.setData(ClipboardData(text: _sentence));
+                              final copyText = _translatedSentence.isNotEmpty
+                                  ? '$_sentence\n$_translatedSentence'
+                                  : _sentence;
+                              Clipboard.setData(ClipboardData(text: copyText));
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                   content: Text(isTr ? 'Kopyalandı' : 'Copied'),
@@ -854,6 +1001,41 @@ class _UiLangOption extends StatelessWidget {
             fontSize: 11,
             fontWeight: FontWeight.w700,
             color: active ? Colors.white : c.textSub,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// NMT çeviri hedef seçici chip'i (Yok / → EN / → FR)
+class _TranslateChip extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+  const _TranslateChip({required this.label, required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: active ? AppColors.green.withValues(alpha: 0.18) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: active ? AppColors.green : c.border,
+            width: 0.8,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+            color: active ? AppColors.green : c.textSub,
           ),
         ),
       ),

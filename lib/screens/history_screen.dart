@@ -280,6 +280,28 @@ class _HistoryItem extends StatelessWidget {
                     height: 1.3,
                   ),
                 ),
+                if (entry.translatedText != null && entry.translatedText!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.translate_rounded, size: 11, color: AppColors.green),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            '${(entry.targetLang ?? '').toUpperCase()}  ${entry.translatedText}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.green,
+                              fontWeight: FontWeight.w400,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 5),
                 Row(
                   children: [
